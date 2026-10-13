@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+#
+# congit — GitHub connectivity toolkit (githubToolkit adapter).
+#
+# When DNS returns a poisoned/dead IP for github.com (page times out while
+# api.github.com or SSH still work), `congit`:
+#   1. resolves each GitHub domain via DNS-over-HTTPS
+#      (AliDNS / DNSPod / Cloudflare / Google), falling back to system DNS,
+#   2. probes every candidate IP over real HTTPS (valid TLS + COMPLETE
+#      small-file download),
+#   3. REPLACES the managed block in the hosts file with verified IPs,
+#   4. flushes the local DNS cache and verifies the result.
+#
+# Re-running it is safe and idempotent: the old block is replaced, not stacked.
+# Works on Linux, macOS and Git Bash (Windows). Only needs bash + curl.
+#
+# Usage:
+#   congit                 # detect IPs + update hosts (asks sudo)
+#   congit --dry-run       # just print the block, change nothing
+#   congit --restore       # remove the managed block
+#   congit --self-check    # instant sanity check (used by Vise healthcheck)
+#
+set -euo pipefail
+
+VERSION="1.0.0"
+BEGIN_MARKER="# >>> github-hosts-fix >>>"
+END_MARKER="# <<< github-hosts-fix <<<"
+
+# Domains needed for the GitHub website, git over HTTPS and asset/CDN loads.
+DOMAINS=(
+  github.com
+  api.github.com
+  codeload.github.com
+  raw.githubusercontent.com
+  objects.githubusercontent.com
+  github.githubassets.com
+  avatars.githubusercontent.com
+)
+
+# DoH endpoints (China-friendly ones first).
+DOH_URLS=(
+  "https://223.5.5.5/dns-query"
+  "https://doh.pub/dns-query"
+  "https://1.1.1.1/dns-query"
+  "https://8.8.8.8/resolve"
+)
+
+DRY_RUN=0
+RESTORE=0
+SELF_CHECK=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --restore) RESTORE=1 ;;
+    --self-check) SELF_CHECK=1 ;;
+    --version) echo "congit $VERSION"; exit 0 ;;
+    -h|--help)
+      sed -n '2,30p' "${BASH_SOURCE[0]}"
+      exit 0 ;;
+    *) echo "congit: unknown option: $arg (see --help)" >&2; exit 2 ;;
+  esac
+done
+
+# --- locate the hosts file ---------------------------------------------------
+HOSTS_FILE="/etc/hosts"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    sysroot="${SYSTEMROOT:-/c/Windows}"
+    HOSTS_FILE="$(cygpath -u "$sysroot" 2>/dev/null || echo /c/Windows)/System32/drivers/etc/hosts"
+    ;;
+esac
+
+if [[ ! -w "$HOSTS_FILE" ]]; then
+  SUDO="sudo"
+else
+  SUDO=""
+fi
+
+# --- instant self check (no network, no sudo) --------------------------------
+if [[ $SELF_CHECK -eq 1 ]]; then
+  command -v curl >/dev/null 2>&1 || { echo "congit: curl not found in PATH" >&2; exit 1; }
+  [[ -f "$HOSTS_FILE" ]] || { echo "congit: hosts file not found: $HOSTS_FILE" >&2; exit 1; }
+  echo "congit $VERSION: OK (hosts: $HOSTS_FILE)"
+  exit 0
+fi
+
+# --- remove any previously managed block (prints cleaned hosts on stdout) ----
+strip_block() {
+  awk -v b="$BEGIN_MARKER" -v e="$END_MARKER" '
+    index($0, b) == 1 { skip = 1; next }
+    index($0, e) == 1 { skip = 0; next }
+    !skip
+  ' "$HOSTS_FILE"
+}
+
+# --- restore mode -------------------------------------------------------------
+if [[ $RESTORE -eq 1 ]]; then
+  if ! grep -qF "$BEGIN_MARKER" "$HOSTS_FILE" 2>/dev/null; then
+    echo "No managed block found in $HOSTS_FILE — nothing to do."
+    exit 0
+  fi
+  if [[ $DRY_RUN -eq 1 ]]; then
+    echo "[dry-run] Would remove the $BEGIN_MARKER block from $HOSTS_FILE"
+    exit 0
+  fi
+  tmp="$(mktemp)"
+  strip_block > "$tmp"
+  if [[ -n "$SUDO" ]]; then
+    echo "Removing managed block from $HOSTS_FILE (sudo required)..."
+    sudo cp "$tmp" "$HOSTS_FILE"
+  else
+    cp "$tmp" "$HOSTS_FILE"
+  fi
+  rm -f "$tmp"
+  echo "Done. GitHub hosts override removed."
+  exit 0
+fi
+
+# Max candidate IPs probed per domain (probed in parallel).
+MAX_CANDIDATES=8
+
+# Pick a small path so a COMPLETE transfer fits inside the timeout: headers +
+# a few KB downloaded. An IP that answers headers but stalls mid-body (typical
+# GitHub throttling) fails this test.
+probe_path() {
+  case "$1" in
+    github.com) echo "/favicon.ico" ;;
+    *)          echo "/" ;;
+  esac
+}
+
+# --- 1. resolve candidates (aggregate ALL DoH providers, then system DNS) ----
+resolve_candidates() {
+  local domain="$1" url resp
+  {
+    for url in "${DOH_URLS[@]}"; do
+      resp="$(curl -fsS --max-time 5 -H 'Accept: application/dns-json' \
+              "$url?name=$domain&type=A" 2>/dev/null || true)"
+      [[ -n "$resp" ]] && printf '%s\n' "$resp" \
+        | grep -oE '"data":"[0-9]{1,3}(\.[0-9]{1,3}){3}"' \
+        | sed -E 's/.*"([0-9.]+)"/\1/'
+    done
+    # System-DNS fallback (may itself be poisoned, but it gets probed anyway).
+    if command -v getent >/dev/null 2>&1; then
+      getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}'
+    fi
+  } | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' | sort -u
+}
+
+# --- 2. probe one IP: full small download must COMPLETE, valid TLS -----------
+# Prints "<seconds> <ip>" on success (speed-rankable); non-zero exit on fail.
+probe_ip() {
+  local domain="$1" ip="$2" path="$3" out code t
+  out="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}' \
+            --connect-timeout 3 --max-time 6 \
+            --resolve "$domain:443:$ip" "https://$domain$path" 2>/dev/null)" || return 1
+  code="${out%% *}"
+  t="${out##* }"
+  # 2xx/3xx/4xx AND curl exit 0 => TLS terminated at the right host and the
+  # whole body transferred in time.
+  [[ "$code" =~ ^[234][0-9][0-9]$ ]] || return 1
+  echo "$t $ip"
+}
+
+# --- 3. probe every candidate in parallel, keep the FASTEST ------------------
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+echo "congit: probing GitHub IPs (a few seconds)..."
+find_best_ip() {
+  local domain="$1" path ip i=0
+  path="$(probe_path "$domain")"
+  while IFS= read -r ip; do
+    (( i >= MAX_CANDIDATES )) && break
+    i=$((i + 1))
+    ( result="$(probe_ip "$domain" "$ip" "$path")" \
+        && echo "$result" >> "$WORKDIR/$domain.cand" ) &
+  done < <(resolve_candidates "$domain")
+  wait
+  if [[ -s "$WORKDIR/$domain.cand" ]]; then
+    sort -n "$WORKDIR/$domain.cand" | head -1 | awk '{print $2}' \
+      > "$WORKDIR/$domain"
+  fi
+}
+
+for d in "${DOMAINS[@]}"; do
+  find_best_ip "$d" &
+done
+wait
+
+VERIFIED=()
+SPEED=()
+FAILED=()
+for d in "${DOMAINS[@]}"; do
+  if [[ -s "$WORKDIR/$d" ]]; then
+    ip="$(cat "$WORKDIR/$d")"
+    t="$(awk -v ip="$ip" '$2==ip{print $1; exit}' "$WORKDIR/$d.cand")"
+    VERIFIED+=("$ip $d")
+    SPEED+=("$d ${t}s")
+  else
+    FAILED+=("$d")
+  fi
+done
+
+if [[ ${#VERIFIED[@]} -eq 0 ]]; then
+  echo "congit: ERROR - no alive GitHub IP found for any domain." >&2
+  echo "Possible causes: no network, all DoH endpoints blocked, or a captive portal." >&2
+  echo "If you have a local proxy (Clash/V2Ray), try instead:" >&2
+  echo "  export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890" >&2
+  exit 1
+fi
+
+# --- 4. build the managed block ----------------------------------------------
+BLOCK="$(mktemp)"
+{
+  echo "$BEGIN_MARKER"
+  echo "# updated: $(date -u +%Y-%m-%dT%H:%M:%SZ) by congit v$VERSION"
+  printf '%s\n' "${VERIFIED[@]}"
+  echo "$END_MARKER"
+} > "$BLOCK"
+
+echo
+echo "Verified alive IPs (fastest complete download per domain):"
+for i in "${!VERIFIED[@]}"; do
+  printf '  %-32s %s\n' "${VERIFIED[$i]}" "(${SPEED[$i]})"
+done
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+  echo "Skipped (no alive IP found): ${FAILED[*]}"
+fi
+echo
+
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo "[dry-run] The following block would replace the old one in $HOSTS_FILE:"
+  echo "-----8<-----"
+  cat "$BLOCK"
+  echo "-----8<-----"
+  exit 0
+fi
+
+# --- 5. back up + atomically replace the block -------------------------------
+backup="$HOSTS_FILE.bak.$(date +%Y%m%d%H%M%S)"
+if [[ -n "$SUDO" ]]; then
+  echo "Updating $HOSTS_FILE (sudo required)..."
+  sudo cp "$HOSTS_FILE" "$backup"
+else
+  cp "$HOSTS_FILE" "$backup"
+fi
+echo "Backup saved: $backup"
+
+new_hosts="$(mktemp)"
+strip_block > "$new_hosts"
+# Ensure file ends with a newline before appending.
+[[ -s "$new_hosts" ]] && tail -c1 "$new_hosts" | read -r _ || echo >> "$new_hosts"
+cat "$BLOCK" >> "$new_hosts"
+rm -f "$BLOCK"
+
+if [[ -n "$SUDO" ]]; then
+  sudo cp "$new_hosts" "$HOSTS_FILE"
+else
+  cp "$new_hosts" "$HOSTS_FILE"
+fi
+rm -f "$new_hosts"
+
+# --- 6. best-effort DNS cache flush ------------------------------------------
+if command -v resolvectl >/dev/null 2>&1; then
+  $SUDO resolvectl flush-caches 2>/dev/null || true
+fi
+if command -v dscacheutil >/dev/null 2>&1; then
+  $SUDO dscacheutil -flushcache 2>/dev/null || true
+  $SUDO killall -HUP mDNSResponder 2>/dev/null || true
+fi
+
+# --- 7. verify (must be a COMPLETE fast download, not just headers) ----------
+echo
+out="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}' \
+          --connect-timeout 4 --max-time 8 https://github.com/favicon.ico 2>/dev/null)" \
+  && code="${out%% *}" t="${out##* }" || { code=000; t=timeout; }
+if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then
+  echo "SUCCESS: https://github.com fully reachable (HTTP $code in ${t}s)."
+  echo "Re-run 'congit' anytime to refresh; use 'congit --restore' to undo."
+else
+  echo "WARNING: https://github.com still not fully usable ('$code' / $t)." >&2
+  echo "The pinned IP may have died — just re-run 'congit'." >&2
+  exit 1
+fi
