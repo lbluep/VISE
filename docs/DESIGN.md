@@ -304,6 +304,12 @@ visectl clean [--reports] [--state] [--dry-run] [--json] # clean artifacts
 
 All commands support `--json` to output machine-readable content to stdout.
 
+**`visectl run` working directory:** adapter CLIs are dispatched with the
+*adapter directory* as cwd, so adapter-relative paths in manifests and scripts
+behave predictably. Callers (humans and agents) must therefore pass **absolute
+paths** when referring to files elsewhere — e.g.
+`visectl run fast_search search "def main" "$PWD/adapters" --type py`.
+
 **`vise_mcp.py`** MCP stdio bridge (optional Layer 4 front for MCP hosts):
 
 A thin newline-delimited JSON-RPC 2.0 server (stdlib only) that translates MCP
@@ -330,11 +336,14 @@ Launch via `visectl mcp`, or register `core/vise_mcp.py` in an MCP host config.
 # >>> Vise >>>
 [[ -f "/path/to/Vise/core/vise_functions.sh" ]] && source "/path/to/Vise/core/vise_functions.sh"
 # <<< Vise <<<
-
-# vise_functions.sh defines two shell functions:
-visectl()  { "$VISE_PYTHON" "$VISE_ROOT/core/visectl.py"  "$@"; }
-viseinit() { "$VISE_PYTHON" "$VISE_ROOT/core/viseinit.py" "$@"; }
 ```
+
+The loader defines `visectl`, `viseinit`, and `visereload` (manual re-source).
+In interactive shells it also installs a `PROMPT_COMMAND` watcher that re-sources
+the loader when `.vise/registry.json` (adapter set changed via setup) or the
+loader itself is modified — already-open shells pick up changes at the next
+prompt, no manual `source ~/.bashrc` needed. Non-interactive shells skip the
+watcher.
 
 ---
 
