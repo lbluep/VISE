@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "adapter_id": "http_fetch",
+  "name": "HttpFetch",
+  "version": "1.0.0",
+  "description": "Minimal web fetcher: read URL content or headers from the command line, pure Python stdlib.",
+  "required_cots": [
+    { "tool": "python", "min_version": "3.11" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/http_fetch/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/http_fetch/main.py",
+    "thread_cli": "src/http_fetch/thread_cli.py"
+  },
+  "commands": [
+    {
+      "name": "get",
+      "description": "Fetch a URL and print body text (HTML tags stripped)",
+      "args": [
+        { "name": "url", "required": true, "description": "http(s) URL" },
+        { "name": "--max-bytes", "required": false, "description": "Read at most N bytes, default 200000" },
+        { "name": "--raw", "required": false, "description": "Do not strip HTML tags" }
+      ]
+    },
+    {
+      "name": "headers",
+      "description": "Fetch a URL (HEAD) and print response headers",
+      "args": [
+        { "name": "url", "required": true, "description": "http(s) URL" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "usage" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "tools",
+    "tags": ["http", "web", "fetch", "network"],
+    "description": "Fetch and inspect web pages from the command line."
+  }
+}

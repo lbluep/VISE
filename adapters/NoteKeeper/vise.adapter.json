@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "adapter_id": "note_keeper",
+  "name": "NoteKeeper",
+  "version": "1.0.0",
+  "description": "Persistent note store for AI assistants: knowledge captured in one session stays searchable in the next.",
+  "required_cots": [
+    { "tool": "python", "min_version": "3.11" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/note_keeper/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/note_keeper/main.py",
+    "thread_cli": "src/note_keeper/thread_cli.py"
+  },
+  "commands": [
+    {
+      "name": "add",
+      "description": "Store a note",
+      "args": [
+        { "name": "title", "required": true, "description": "Short unique title" },
+        { "name": "content", "required": true, "description": "Note body" },
+        { "name": "--tags", "required": false, "description": "Comma-separated tags" }
+      ]
+    },
+    {
+      "name": "get",
+      "description": "Fetch a note by id or exact title",
+      "args": [
+        { "name": "id_or_title", "required": true, "description": "Note id (integer) or exact title" }
+      ]
+    },
+    {
+      "name": "search",
+      "description": "Full-text search over titles and content",
+      "args": [
+        { "name": "keyword", "required": true, "description": "Keyword or phrase" }
+      ]
+    },
+    {
+      "name": "list",
+      "description": "List notes (id, title, tags, updated)",
+      "args": [
+        { "name": "--tag", "required": false, "description": "Filter by tag" },
+        { "name": "--limit", "required": false, "description": "Max notes, default 20" }
+      ]
+    },
+    {
+      "name": "delete",
+      "description": "Delete a note by id",
+      "args": [
+        { "name": "id", "required": true, "description": "Note id (integer)" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "usage | recent (latest 5 notes, full text)" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "database",
+    "tags": ["memory", "notes", "persistence", "knowledge", "sqlite"],
+    "description": "Cross-session persistent memory: notes an agent writes today are searchable tomorrow."
+  }
+}
