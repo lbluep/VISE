@@ -1,0 +1,38 @@
+name: ci
+
+# Continuous integration for pull requests: installs Vise from a clean
+# checkout and runs the smoke test (tests/smoke.sh), the machine-checkable
+# subset of docs/TEST-PLAN.md (T0/T1). Enable "Require status checks to pass"
+# for the `main` branch so this gates merges.
+#
+# Scope: ubuntu only for now. Vise also targets Git Bash on Windows; a
+# windows-latest matrix is intentionally deferred until the ubuntu job is
+# stable (see CONTRIBUTING.md).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # A clean runner has no adapter tooling. Install the external tools that
+      # adapters declare in `required_cots` (fast_search needs ripgrep >= 13),
+      # otherwise `viseinit --all` exits 2 on a missing dependency.
+      - name: Install external tools required by adapters
+        run: |
+          sudo apt-get install -y ripgrep
+          rg --version
+      - name: Smoke test
+        run: bash tests/smoke.sh

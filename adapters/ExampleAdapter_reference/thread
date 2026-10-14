@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# thread - bootstrap script for ExampleAdapter.
+# Sets up adapter config, validates paths, and registers state with Vise.
+# Invoked by viseinit (as a manifest init_step) or directly via: thread
+set -euo pipefail
+
+ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VISE_ROOT="${VISE_ROOT:-$(cd "$ADAPTER_DIR/../.." && pwd)}"
+STATE_DIR="$VISE_ROOT/.vise/state/example_tool"
+PYTHON_BIN="${PYTHON:-python3}"
+
+mkdir -p "$STATE_DIR"
+"$PYTHON_BIN" "$ADAPTER_DIR/src/example_tool/thread_cli.py" \
+    --adapter-dir "$ADAPTER_DIR" \
+    --state-dir "$STATE_DIR"
+
+echo "[thread] example_tool initialized (state: $STATE_DIR)"

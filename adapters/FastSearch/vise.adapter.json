@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "adapter_id": "fast_search",
+  "name": "FastSearch",
+  "version": "1.0.0",
+  "description": "Blazing-fast code and text search powered by ripgrep, exposed with agent-friendly flags.",
+  "required_cots": [
+    { "tool": "rg", "min_version": "13.0" },
+    { "tool": "python", "min_version": "3.11" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/fast_search/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/fast_search/main.py",
+    "thread_cli": "src/fast_search/thread_cli.py"
+  },
+  "commands": [
+    {
+      "name": "search",
+      "description": "Search file contents for a regex pattern, returns matching lines with file:line",
+      "args": [
+        { "name": "pattern", "required": true, "description": "Regex pattern (ripgrep syntax)" },
+        { "name": "path", "required": false, "description": "Directory to search, default cwd" },
+        { "name": "--type", "required": false, "description": "File type filter, e.g. py, js, md" },
+        { "name": "-i", "required": false, "description": "Case-insensitive search" },
+        { "name": "--max", "required": false, "description": "Max matches to print, default 50" }
+      ]
+    },
+    {
+      "name": "files",
+      "description": "List files in a directory tree, optionally filtered by a glob",
+      "args": [
+        { "name": "path", "required": false, "description": "Directory to list, default cwd" },
+        { "name": "--glob", "required": false, "description": "Glob filter, e.g. '*.py'" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "usage | tips" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "tools",
+    "tags": ["search", "grep", "code-navigation", "ripgrep"],
+    "description": "Fast regex search and file listing for code navigation."
+  }
+}

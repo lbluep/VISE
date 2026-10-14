@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "adapter_id": "github_toolkit",
+  "name": "githubToolkit",
+  "version": "1.0.0",
+  "description": "GitHub connectivity toolkit: detects poisoned/dead DNS, pins verified-alive GitHub IPs in the hosts file via the 'congit' command.",
+  "required_cots": [
+    { "tool": "curl" }
+  ],
+  "init_steps": [
+    {
+      "name": "install congit command",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 30
+    }
+  ],
+  "healthcheck": {
+    "name": "congit installed and runnable",
+    "run": "bash",
+    "args": ["-c", "test -x \"$HOME/.local/bin/congit\" && \"$HOME/.local/bin/congit\" --self-check"],
+    "timeout_sec": 15
+  },
+  "entry_points": {
+    "cli": "src/github_toolkit/main.py",
+    "extensions": "vise_extensions.sh"
+  },
+  "commands": [
+    {
+      "name": "(default)",
+      "description": "Fix GitHub hosts entries (forwards to congit verbatim)",
+      "args": [
+        { "name": "--dry-run", "required": false, "description": "Preview changes without writing" },
+        { "name": "--restore", "required": false, "description": "Remove the managed hosts block" },
+        { "name": "--self-check", "required": false, "description": "Instant sanity check" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "tools",
+    "tags": ["github", "network", "dns", "connectivity"],
+    "description": "Fix GitHub reachability by probing live IPs and pinning them in the hosts file."
+  }
+}

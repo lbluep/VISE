@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "adapter_id": "repo_map",
+  "name": "RepoMap",
+  "version": "1.0.0",
+  "description": "Repository orientation for AI assistants: branch, changes, recent commits, directory tree and language stats in one shot.",
+  "required_cots": [
+    { "tool": "git" },
+    { "tool": "python", "min_version": "3.11" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/repo_map/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/repo_map/main.py",
+    "thread_cli": "src/repo_map/thread_cli.py"
+  },
+  "commands": [
+    {
+      "name": "overview",
+      "description": "One-shot repo orientation: root, branch, change counts, recent commits, top-level layout, language stats",
+      "args": [
+        { "name": "path", "required": false, "description": "Path inside the repo (absolute), default cwd" }
+      ]
+    },
+    {
+      "name": "status",
+      "description": "Porcelain status: modified/untracked files",
+      "args": [
+        { "name": "path", "required": false, "description": "Path inside the repo, default cwd" }
+      ]
+    },
+    {
+      "name": "log",
+      "description": "Recent commits, one per line",
+      "args": [
+        { "name": "n", "required": false, "description": "Number of commits, default 10" }
+      ]
+    },
+    {
+      "name": "tree",
+      "description": "Directory tree, skipping .git/.venv/node_modules",
+      "args": [
+        { "name": "path", "required": false, "description": "Root of the tree, default cwd" },
+        { "name": "--depth", "required": false, "description": "Max depth, default 2" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "usage" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "tools",
+    "tags": ["git", "repository", "orientation", "code-structure"],
+    "description": "Repository orientation: where am I, what changed, what does the tree look like."
+  }
+}

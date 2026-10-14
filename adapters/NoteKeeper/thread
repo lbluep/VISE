@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# thread - bootstrap script for NoteKeeper.
+set -euo pipefail
+
+ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VISE_ROOT="${VISE_ROOT:-$(cd "$ADAPTER_DIR/../.." && pwd)}"
+STATE_DIR="$VISE_ROOT/.vise/state/note_keeper"
+PYTHON_BIN="${PYTHON:-python3}"
+
+mkdir -p "$STATE_DIR"
+"$PYTHON_BIN" "$ADAPTER_DIR/src/note_keeper/thread_cli.py" \
+    --adapter-dir "$ADAPTER_DIR" \
+    --state-dir "$STATE_DIR"
+
+echo "[thread] note_keeper initialized (state: $STATE_DIR)"

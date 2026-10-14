@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "adapter_id": "file_patch",
+  "name": "FilePatch",
+  "version": "1.0.0",
+  "description": "Controlled file editing: preview a change as a unified diff before writing, automatic .bak backup, one-command restore.",
+  "required_cots": [
+    { "tool": "python", "min_version": "3.11" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/file_patch/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/file_patch/main.py",
+    "thread_cli": "src/file_patch/thread_cli.py"
+  },
+  "commands": [
+    {
+      "name": "preview",
+      "description": "Show unified diff between file and new content from stdin, writes nothing",
+      "args": [
+        { "name": "file", "required": true, "description": "Target file (absolute path recommended)" }
+      ]
+    },
+    {
+      "name": "apply",
+      "description": "Write new content from stdin after printing the diff; saves previous content to <file>.bak",
+      "args": [
+        { "name": "file", "required": true, "description": "Target file (absolute path recommended)" },
+        { "name": "--yes", "required": false, "description": "Skip the diff echo (quiet apply)" }
+      ]
+    },
+    {
+      "name": "restore",
+      "description": "Restore <file> from <file>.bak",
+      "args": [
+        { "name": "file", "required": true, "description": "Target file" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "usage" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "tools",
+    "tags": ["edit", "diff", "patch", "safety"],
+    "description": "Review-before-write file editing with automatic backup."
+  }
+}

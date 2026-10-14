@@ -1,0 +1,10 @@
+{
+  "_doc": "Portable path overrides. Edit this file to pin explicit tool paths. Priority: this file > tool_paths.json > PATH.",
+  "cots": {
+    "python": { "path": null, "hint": "Python >= 3.11" },
+    "git":    { "path": null, "hint": "Git" },
+    "7zip":   { "path": null, "hint": "7z / 7zz" },
+    "vscode": { "path": null, "hint": "code" }
+  },
+  "fallback_to_path": true
+}

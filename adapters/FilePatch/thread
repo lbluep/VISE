@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# thread - bootstrap script for FilePatch.
+set -euo pipefail
+
+ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VISE_ROOT="${VISE_ROOT:-$(cd "$ADAPTER_DIR/../.." && pwd)}"
+STATE_DIR="$VISE_ROOT/.vise/state/file_patch"
+PYTHON_BIN="${PYTHON:-python3}"
+
+mkdir -p "$STATE_DIR"
+"$PYTHON_BIN" "$ADAPTER_DIR/src/file_patch/thread_cli.py" \
+    --adapter-dir "$ADAPTER_DIR" \
+    --state-dir "$STATE_DIR"
+
+echo "[thread] file_patch initialized (state: $STATE_DIR)"

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "adapter_id": "task_list",
+  "name": "TaskList",
+  "version": "1.0.0",
+  "description": "Persistent to-do list for AI assistants: plan in one session, resume in the next.",
+  "required_cots": [
+    { "tool": "python", "min_version": "3.11" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/task_list/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/task_list/main.py",
+    "thread_cli": "src/task_list/thread_cli.py"
+  },
+  "commands": [
+    {
+      "name": "add",
+      "description": "Add a task",
+      "args": [
+        { "name": "title", "required": true, "description": "Task title" },
+        { "name": "--priority", "required": false, "description": "high | medium | low (default medium)" }
+      ]
+    },
+    {
+      "name": "done",
+      "description": "Mark a task done",
+      "args": [
+        { "name": "id", "required": true, "description": "Task id (integer)" }
+      ]
+    },
+    {
+      "name": "list",
+      "description": "List open tasks (add --all to include done)",
+      "args": [
+        { "name": "--all", "required": false, "description": "Include completed tasks" }
+      ]
+    },
+    {
+      "name": "remove",
+      "description": "Delete a task",
+      "args": [
+        { "name": "id", "required": true, "description": "Task id (integer)" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "usage | pending (open tasks, one per line)" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "database",
+    "tags": ["todo", "tasks", "planning", "persistence"],
+    "description": "Cross-session to-do list: plan in one session, resume in the next."
+  }
+}

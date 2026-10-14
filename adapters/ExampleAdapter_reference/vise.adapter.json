@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "adapter_id": "example_tool",
+  "name": "ExampleAdapter",
+  "version": "1.0.0",
+  "description": "Reference adapter showing the Vise adapter contract.",
+  "required_cots": [
+    { "tool": "python", "min_version": "3.11" },
+    { "tool": "git" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/example_tool/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/example_tool/main.py",
+    "thread_cli": "src/example_tool/thread_cli.py",
+    "extensions": "vise_extensions.sh"
+  },
+  "commands": [
+    { "name": "list", "description": "Show adapter info" },
+    {
+      "name": "decode",
+      "description": "Decode an encoded string",
+      "args": [
+        { "name": "text", "required": true, "description": "Encoded input (base64 by default)" },
+        { "name": "--hex", "required": false, "description": "Interpret input as hex" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "info | readme" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "tools",
+    "tags": ["example", "reference"],
+    "description": "Reference adapter showing the Vise adapter contract."
+  }
+}
