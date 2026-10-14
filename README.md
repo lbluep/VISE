@@ -387,3 +387,18 @@ creates a project virtual environment (`.venv`) that all Vise commands use, so
 adapters may declare third-party Python packages in their manifest `python_deps`
 field — those are aggregated into `.vise/requirements.txt` and installed into
 `.venv`. Runs on Linux, macOS, and Git Bash on Windows.
+
+### Contributing
+
+Contributions are welcome. Before opening a pull request, read
+[CONTRIBUTING.md](CONTRIBUTING.md) — it lists the architectural contracts a
+change must not break — and verify your change against the test points in
+[docs/TEST-PLAN.md](docs/TEST-PLAN.md). The baseline is one command:
+
+```bash
+bash tests/smoke.sh
+```
+
+The PR template
+([.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md)) is the
+acceptance checklist.
