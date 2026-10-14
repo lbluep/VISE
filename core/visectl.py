@@ -19,6 +19,12 @@ Usage:
   visectl clean --dry-run                 # show what would be removed, don't delete
   visectl manifest list                   # files Vise added outside VISE_ROOT
   visectl manifest verify                 # check those files are intact
+  visectl adapter status                  # clean / modified / unbaselined
+  visectl adapter diff <id>               # drift against the baseline
+  visectl adapter snapshot <id> -m "why"  # snapshot BEFORE editing an adapter
+  visectl adapter restore <id> [--base]   # roll back to the snapshot/baseline
+  visectl adapter promote <id> -m "why"   # sediment the change as a patch
+  visectl adapter rebaseline <id>         # accept the tree as the reference
 
 All commands support --json for machine-readable output to stdout.
 """
@@ -40,6 +46,10 @@ REGISTRY_PATH = VISE_ROOT / ".vise" / "registry.json"
 REPORTS_DIR = VISE_ROOT / ".vise" / "reports"
 STATE_DIR = VISE_ROOT / ".vise" / "state"
 REPORT_TTL_DAYS = 30  # P2-3: reports older than this are cleaned
+
+# Guard domain exit code (C13): a modified adapter with no open snapshot is
+# refused by `run` and `promote`. Kept out of the viseinit 0-6 map.
+EXIT_UNPROTECTED = 7
 
 
 def load_json(path: Path) -> dict:
@@ -71,6 +81,17 @@ def get_manifest(adapter_id: str) -> dict | None:
     if not manifest_path.is_file():
         return None
     return load_json(manifest_path)
+
+
+def _guard():
+    """Lazy import: the guard module is only needed on the update path."""
+    import adapter_guard
+    return adapter_guard
+
+
+def _baseline():
+    import baseline
+    return baseline
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -202,6 +223,17 @@ def cmd_run(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
+    # C13 gate: an adapter edited without a snapshot is unprotected - it can
+    # neither be trusted nor rolled back, so refuse to run it. An *unbaselined*
+    # adapter passes through (an install predating baselines must keep working);
+    # `doctor` / `adapter status` are where that state is surfaced.
+    if not getattr(args, "allow_modified", False):
+        gate = _guard().check(args.adapter_id)
+        if gate["state"] == "modified" and not gate["protected"]:
+            print(f"visectl: refusing to run '{args.adapter_id}': {gate['note']}",
+                  file=sys.stderr)
+            return EXIT_UNPROTECTED
+
     cli_entry = manifest.get("entry_points", {}).get("cli")
     if not cli_entry:
         print(f"visectl: adapter '{args.adapter_id}' has no CLI entry point",
@@ -306,6 +338,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         hc = manifest.get("healthcheck")
         if hc:
             r["healthcheck"] = format_step(hc)
+
+        # C13: report adapter-code drift. An unprotected modified adapter is
+        # refused by `run`, so it is a genuine usability failure, not a note.
+        gate = _guard().check(a["adapter_id"])
+        r["guard"] = {"state": gate["state"], "protected": gate["protected"],
+                      "open_snapshot": gate["open_snapshot"]}
+        if gate["state"] == "modified" and not gate["protected"]:
+            r["status"] = "failed"
+            r["issues"].append(f"unprotected drift: {gate['note']}")
+            all_ok = False
         results.append(r)
 
     if args.json:
@@ -320,9 +362,34 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 print(f"       init: {step}")
             if r.get("healthcheck"):
                 print(f"       healthcheck: {r['healthcheck']}")
+            guard = r.get("guard") or {}
+            if guard.get("state") not in (None, "clean"):
+                detail = (f"open snapshot {guard['open_snapshot']}"
+                          if guard.get("open_snapshot") else guard["state"])
+                print(f"       guard: {detail}")
         print(f"\nDoctor: {sum(r['status']=='ok' for r in results)}/{len(results)} OK")
 
     return 0 if all_ok else 1
+
+
+def cmd_adapter(args: argparse.Namespace) -> int:
+    """Dispatch `visectl adapter <verb>` to the baseline / guard modules.
+
+    Verb-to-module mapping: `status` and `diff` are read-only baseline views;
+    everything else is a guard action. Flag names are identical in both CLIs,
+    so the parsed namespace is handed over unchanged.
+    """
+    verb = args.adapter_cmd
+    # Mirrors the check in core/adapter_guard.py's own CLI: `-m ""` satisfies
+    # argparse's `required=True` while carrying no information, and the reason
+    # is what makes a later rollback decision auditable.
+    if verb in ("snapshot", "promote") and not args.message.strip():
+        print(f"visectl: {verb}: --message must not be blank - "
+              "record WHY the adapter changes", file=sys.stderr)
+        return 2
+    if verb in ("status", "diff"):
+        return getattr(_baseline(), f"cmd_{verb}")(args)
+    return getattr(_guard(), f"cmd_{verb}")(args)
 
 
 def cmd_manifest(args: argparse.Namespace) -> int:
@@ -435,6 +502,9 @@ def main() -> int:
     p_thread.add_argument("--all", action="store_true")
 
     p_run = sub.add_parser("run", help="run adapter CLI")
+    p_run.add_argument("--allow-modified", action="store_true",
+                       help="run even if the adapter drifted without a "
+                            "snapshot (C13 escape hatch)")
     p_run.add_argument("adapter_id")
     p_run.add_argument("cli_args", nargs=argparse.REMAINDER)
 
@@ -464,6 +534,63 @@ def main() -> int:
     p_manifest.add_argument("manifest_cmd", choices=["list", "verify"])
     p_manifest.add_argument("--json", action="store_true")
 
+    # C13: adapter protection / rollback / sedimentation. Verbs and flag names
+    # mirror core/baseline.py and core/adapter_guard.py so their namespaces pass
+    # straight through to the module handlers.
+    p_adapter = sub.add_parser(
+        "adapter", help="protect, roll back and sediment adapter-code changes")
+    a_sub = p_adapter.add_subparsers(dest="adapter_cmd", required=True)
+
+    a_st = a_sub.add_parser("status", help="clean / modified / unbaselined")
+    a_st.add_argument("adapter_id", nargs="?")
+    a_st.add_argument("--json", action="store_true")
+
+    a_df = a_sub.add_parser("diff", help="file-level drift against the baseline")
+    a_df.add_argument("adapter_id")
+    a_df.add_argument("--json", action="store_true")
+
+    a_sn = a_sub.add_parser("snapshot",
+                            help="snapshot an adapter BEFORE editing it")
+    a_sn.add_argument("adapter_id")
+    a_sn.add_argument("-m", "--message", required=True,
+                      help="why the adapter is about to be modified")
+    a_sn.add_argument("--triggered-by", default=None)
+    a_sn.add_argument("--force", action="store_true",
+                      help="add a snapshot even if one is already open")
+    a_sn.add_argument("--json", action="store_true")
+
+    a_ls = a_sub.add_parser("list", help="list snapshot generations")
+    a_ls.add_argument("adapter_id")
+    a_ls.add_argument("--json", action="store_true")
+
+    a_rs = a_sub.add_parser("restore",
+                            help="reinstate a snapshot or the pristine baseline")
+    a_rs.add_argument("adapter_id")
+    a_rs.add_argument("--gen", type=int, default=None,
+                      help="generation to restore (0 = newest, default)")
+    a_rs.add_argument("--base", action="store_true",
+                      help="restore the pristine baseline instead")
+    a_rs.add_argument("--dry-run", action="store_true")
+    a_rs.add_argument("--json", action="store_true")
+
+    a_pr = a_sub.add_parser("promote",
+                            help="write a patch for the improvement (no commit)")
+    a_pr.add_argument("adapter_id")
+    a_pr.add_argument("-m", "--message", required=True)
+    a_pr.add_argument("--dry-run", action="store_true")
+    a_pr.add_argument("--json", action="store_true")
+
+    a_ck = a_sub.add_parser("check", help="gate: is the adapter protected?")
+    a_ck.add_argument("adapter_id", nargs="?")
+    a_ck.add_argument("--json", action="store_true")
+
+    a_rb = a_sub.add_parser("rebaseline",
+                            help="accept the current tree as the new reference")
+    a_rb.add_argument("adapter_id", nargs="?")
+    a_rb.add_argument("--all", action="store_true")
+    a_rb.add_argument("--force", action="store_true")
+    a_rb.add_argument("--json", action="store_true")
+
     args = parser.parse_args()
 
     # --json is per-subcommand
@@ -487,6 +614,8 @@ def main() -> int:
         return cmd_clean(args)
     elif args.command == "manifest":
         return cmd_manifest(args)
+    elif args.command == "adapter":
+        return cmd_adapter(args)
     else:
         parser.print_help()
         return 2

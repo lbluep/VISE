@@ -98,6 +98,7 @@ Vise is built in four layers, from the bottom up:
 │  Layer 4: User / AI Agent entry                  │
 │  viseinit · visectl · vise_mcp                   │
 │  vise_functions.sh (shell integration)           │
+│  adapter_guard.py (snapshot/restore/promote)     │
 ├─────────────────────────────────────────────────┤
 │  Layer 3: Adapter Layer                          │
 │  vise.adapter.json · thread · CLI                │
@@ -109,6 +110,7 @@ Vise is built in four layers, from the bottom up:
 │  Layer 1: Setup                                  │
 │  init/setup.sh · init/register_adapters.py       │
 │  init/uninstall.sh · init/pick_pip_index.py      │
+│  core/baseline.py (install-time baseline)        │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -318,6 +320,9 @@ with Vise            validates paths,     via visectl             executes comma
 | `.vise/state/<id>/state.json` | `thread` | Per-adapter registered state |
 | `.vise/installed.json` | `core/manifest.py` (via setup.sh / thread) | Uninstall ledger: every file Vise created or modified outside `VISE_ROOT` (e.g. `~/.local/bin` wrappers, rc blocks) |
 | `.vise/reports/viseinit_report_*.json` | `viseinit` | Unified init reports (+ `latest.json`) |
+| `.vise/baseline/<id>/` | `init/setup.sh` (via `core/baseline.py`) | Pristine reference: per-file sha256 + tree copy, captured once so drift is detectable and the original restorable without git |
+| `.vise/snapshots/<id>/` | `visectl adapter snapshot` | Rollback points taken before an adapter is edited (newest 5 kept) |
+| `.vise/patches/<id>/` | `visectl adapter promote` | Reviewable unified diffs of accepted improvements (never auto-committed) |
 
 ### Everyday commands
 
@@ -338,6 +343,10 @@ visectl mcp                            # MCP stdio bridge for AI-agent hosts
 visectl doctor                          # diagnose without executing init_steps
 visectl manifest list                   # what Vise added outside VISE_ROOT
 visectl manifest verify                 # integrity-check those files
+visectl adapter status                  # has an adapter drifted from its baseline?
+visectl adapter snapshot example_tool -m "why"   # snapshot BEFORE editing an adapter
+visectl adapter restore example_tool --base      # roll back byte-for-byte
+visectl adapter promote example_tool -m "what changed"  # sediment it as a patch
 visectl clean --reports                 # remove >30-day reports
 visectl clean --state                   # remove orphaned adapter state
 viseinit --all --dry-run                # review planned steps, execute nothing
@@ -362,6 +371,34 @@ working directory — pass absolute paths when targeting files elsewhere.
    needed.
 5. Run `viseinit --all`. If a non-Python dependency is missing, either install
    it or pin an explicit path in `core/adapter_paths.json`.
+
+### Modifying an adapter (protect, roll back, keep the improvement)
+
+An AI assistant often finds an adapter solves *most* of a task but not all of
+it, and edits the adapter's source. That edit is protected, and it works
+without git — a zip/tarball install has the same guarantees.
+
+```bash
+visectl adapter snapshot example_tool -m "why it is about to change"
+# edit adapters/<Name>/ (use `file_patch` for the write)
+viseinit example_tool                            # validate
+visectl adapter restore example_tool [--base]    # reject: roll back byte-for-byte
+visectl adapter promote example_tool -m "what changed"  # accept: write a patch
+```
+
+- The **baseline** is captured at install time in `.vise/baseline/<id>/`. It is
+  written **only when absent**, so re-running `setup.sh` never blesses an edited
+  tree as "original"; accepting new state is explicit:
+  `visectl adapter rebaseline example_tool [--force]`.
+- A **snapshot** (`.vise/snapshots/<id>/`, newest 5 generations) is the rollback
+  point; restoring never runs the adapter's own code, so it still works after an
+  edit broke the adapter.
+- `promote` writes a reviewable unified diff to `.vise/patches/<id>/*.patch` and
+  **never commits** — with a repository, committing stays a deliberate act.
+- A modified adapter with no open snapshot is *unprotected*: `visectl run` and
+  `promote` refuse it (exit `7`) until you snapshot, restore, or rebaseline.
+  `visectl run --allow-modified <id> ...` is the escape hatch for a deliberate
+  manual customization. `visectl doctor` and `visectl adapter status` show drift.
 
 ### Uninstall
 

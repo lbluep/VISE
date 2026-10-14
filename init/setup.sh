@@ -2,14 +2,14 @@
 # Vise one-line setup (Git Bash / Linux / macOS).
 # 1. Detect installed tools (Python >= 3.11, Git, 7-Zip, VS Code)
 # 2. Create/refresh the project virtual environment (.venv)
-# 3. (Re)generate .vise/tool_paths.json, pointing "python" at .venv
-# 4. Record the .venv interpreter in .vise/python
-# 5. (Re)generate .vise/registry.json + .vise/requirements.txt by scanning
+# 3. (Re)generate .vise/tool_paths.json (python -> .venv) + .vise/python
+# 4. (Re)generate .vise/registry.json + .vise/requirements.txt by scanning
 #    adapters/ (generated artifacts, not repo-managed)
+# 5. Capture the adapter baseline (C13; only when absent - see core/baseline.py)
 # 6. Install adapter Python dependencies into .venv
 # 7. Update shell startup to auto-load Vise commands
 # 8. Run viseinit to initialize all Vise configurations
-# Steps 1-5 are idempotent: re-running refreshes machine-local state.
+# Every step is idempotent: re-running only refreshes machine-local state.
 set -euo pipefail
 
 VISE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -97,7 +97,18 @@ echo
 echo "== Generating adapter registry + requirements =="
 "$VENV_PYTHON" "$VISE_ROOT/init/register_adapters.py"
 
-# --- 5. Install adapter Python dependencies into .venv ---------------------
+# --- 5. Capture adapter baselines (C13) -------------------------------------
+# The baseline is the pristine reference an adapter is compared against, and
+# what a zip/tarball install restores from when there is no repository.
+# It is captured only when absent: re-running setup after an adapter was
+# edited must never bless that edit as "original". Accepting new state as the
+# reference is an explicit act: visectl adapter rebaseline <id>.
+echo
+echo "== Capturing adapter baselines =="
+"$VENV_PYTHON" "$VISE_ROOT/core/baseline.py" establish --all \
+    || echo "WARNING: baseline capture failed; 'visectl adapter status' will report unbaselined" >&2
+
+# --- 6. Install adapter Python dependencies into .venv ---------------------
 REQ_FILE="$VISE_ROOT/.vise/requirements.txt"
 echo
 echo "== Installing Python dependencies (.venv) =="
@@ -121,7 +132,7 @@ else
     echo "No third-party Python dependencies declared by adapters; skipping pip."
 fi
 
-# --- 6. Update shell startup to auto-load Vise commands --------------------
+# --- 7. Update shell startup to auto-load Vise commands --------------------
 detect_rc() {
     local shell_name
     shell_name="$(basename "${SHELL:-bash}")"
@@ -154,7 +165,7 @@ fi
     --begin "$MARKER" --end "$MARKER_END" \
     || echo "WARNING: could not record rc block in manifest ledger" >&2
 
-# --- 7. Run viseinit ---------------------------------------------------------
+# --- 8. Run viseinit ---------------------------------------------------------
 echo
 echo "== Running viseinit --all =="
 "$VENV_PYTHON" "$VISE_ROOT/core/viseinit.py" --all

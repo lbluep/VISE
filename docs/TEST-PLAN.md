@@ -19,8 +19,9 @@ Legend: **T#** = test point id. "expect 0" means the process exit code is `0`.
 
 ## T0 — Universal smoke (every PR)
 
-**Automated:** `bash tests/smoke.sh` runs T0 + T1 in one command (same script
-CI executes). The individual commands below are what it asserts.
+**Automated:** `bash tests/smoke.sh` runs T0 + T1 (plus the core of T10, step 7)
+in one command — the same script CI executes. The individual commands below are
+what it asserts.
 
 | ID | Command | Expected |
 | --- | --- | --- |
@@ -160,3 +161,50 @@ the `viseinit` `0`–`6` map — don't conflate them.
 | T9.1 | every command shown in the docs actually exists | `visectl`/`viseinit` accept it (spot-check against `--help`) |
 | T9.2 | relative links resolve | e.g. `docs/DESIGN.md`, `docs/TEST-PLAN.md`, adapter `README.md` |
 | T9.3 | no code or generated artifact changed | `git status --short` shows only `*.md` |
+
+---
+
+## T10 — Adapter guard: protect / roll back / promote (change surface: `core/baseline.py`, `core/adapter_guard.py`, L4 `visectl adapter`, `init/setup.sh`)
+
+Change surface note: run this group **both** in a normal clone and in a
+sandbox that has **no `.git`** — the guard must not depend on git. Build the
+second one with:
+
+```bash
+mkdir /tmp/vise-nogit && git archive --format=tar HEAD | tar -x -C /tmp/vise-nogit
+cd /tmp/vise-nogit && bash init/setup.sh
+```
+
+**Automated:** `bash tests/smoke.sh` step 7 exercises the gate, rollback and
+sediment core (T10.1, T10.2, T10.4–T10.7, T10.9, T10.12, T10.14, T10.15, T10.20,
+T10.21) — several of those only in part; the remaining rows are run manually
+from a checkout.
+
+| ID | Command | Expected |
+| --- | --- | --- |
+| T10.1 | after `bash init/setup.sh`, `visectl adapter status` | every adapter `clean`, exit `0` |
+| T10.2 | re-run `bash init/setup.sh` | baselines **kept, not refreshed** (`[KEEP]`; `established_at` unchanged) — setup never blesses an edited tree |
+| T10.3 | edit an adapter file, then `visectl adapter diff <id>` | the file listed as changed; exit `1` |
+| T10.4 | with that edit present, `visectl run <id> list` | **refused**, exit `7`; stderr names snapshot/restore/rebaseline |
+| T10.5 | `visectl adapter check <id>` and `visectl doctor` | check exits `7`; doctor reports the adapter `[FAIL]` with the guard note |
+| T10.6 | `visectl run --allow-modified <id> list` | adapter executes normally (escape hatch) |
+| T10.7 | `visectl adapter snapshot <id> -m "..."` then `visectl run <id> list` | snapshot created; run now permitted |
+| T10.8 | `visectl adapter snapshot <id> -m "..."` twice (no `--force`) | second call reports `already-open`, no extra generation |
+| T10.9 | `visectl adapter restore <id> --base` after an edit | tracked files byte-identical to baseline (`git diff` empty if git is present); untracked `*.bak`/`__pycache__` left alone |
+| T10.10 | break the adapter (fail its `healthcheck`), then `visectl adapter restore <id>` | restore still succeeds — it never executes adapter code |
+| T10.11 | `visectl adapter restore <id> --gen 1` with ≥2 snapshots | restores the second-newest generation (gen `0` = newest) |
+| T10.12 | `visectl adapter promote <id> -m "..."` on a modified adapter | `.vise/patches/<id>/*.patch` written; prints "committing is a separate act"; **no git commit made** |
+| T10.13 | `patch -p1 -d adapters/<Name> < .vise/patches/<id>/*.patch` on a restored tree | patch applies cleanly; result matches the promoted state |
+| T10.14 | `visectl adapter promote <id> -m "..."` on a **clean** adapter | `[NOOP] nothing-to-promote`, exit `4` |
+| T10.15 | `visectl adapter promote <id> -m "..."` with unprotected drift | **refused**, exit `7` (C13 gate) |
+| T10.16 | 6+ snapshots of one adapter (mix of open/closed) | newest 5 kept, **plus** the newest open snapshot regardless of age; older snapshots — including older open ones — are pruned, so `.vise/` stays bounded |
+| T10.17 | `visectl adapter rebaseline <id>` while modified | `[REFUSE]`, exit `7`; with `--force` it accepts the tree, closes open snapshots, and the adapter becomes `clean` |
+| T10.18 | `.gitignore` check for `.vise/baseline`, `.vise/snapshots`, `.vise/patches` | all ignored and untracked (C7) |
+| T10.19 | non-git sandbox: full lifecycle `snapshot → edit → run → restore → promote → replay` | identical outcomes to a clone; no `git` invocation anywhere in the guard |
+| T10.20 | `visectl adapter status --json` while an adapter is drifted | exit `1`, identical to the human-output run — the exit code reflects the outcome, never the requested format |
+| T10.21 | `visectl adapter snapshot <id> -m ""` (blank reason) | rejected, exit `2` — a blank reason carried no audit trail |
+
+**Exit-code note:** the guard uses `7` for *refused* (unprotected drift,
+`rebaseline` needing `--force`), `4` for *action impossible* (no such
+generation / nothing to promote) and `2` for usage/input errors. These are
+distinct from the `viseinit` `0`–`6` map and from the ledger's `1`/`3`.

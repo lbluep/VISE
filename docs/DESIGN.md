@@ -60,11 +60,12 @@ The current implementation is split into 4 layers, from the bottom up:
 
 | File | Responsibility |
 | --- | --- |
-| `init/setup.sh` | One-shot install (Git Bash / Linux): detect tools → create `.venv` → write `.vise/tool_paths.json` → generate `.vise/registry.json` → install deps → idempotently update shell rc → automatically run `viseinit --all` |
+| `init/setup.sh` | One-shot install (Git Bash / Linux): detect tools → create `.venv` → write `.vise/tool_paths.json` → generate `.vise/registry.json` → capture adapter baselines → install deps → idempotently update shell rc → automatically run `viseinit --all` |
 | `init/register_adapters.py` | Scan `adapters/*/vise.adapter.json` → generate `.vise/registry.json` + `.vise/requirements.txt` (`adapter_id` uniqueness check, warn-and-skip invalid manifests) |
 | `init/pick_pip_index.py` | Probe official PyPI + public mirrors concurrently and print the fastest reachable index (used by `setup.sh` before `pip install`) |
 | `init/uninstall.sh` | One-shot uninstall: apply the uninstall ledger (remove/revert everything Vise added or modified outside `VISE_ROOT`), plus fallback wrapper scan and idempotent rc-marker cleanup; optionally clean up all generated artifacts |
 | `core/manifest.py` | Uninstall ledger writer: installers call `add` right after writing any file outside `VISE_ROOT` (upsert on kind+path, sha256 for created files, revert recipe for modified files); exposes `list`/`verify`/`uninstall-apply` |
+| `core/baseline.py` | Install-time reference state (C13): fingerprints each adapter into `.vise/baseline/<id>/` (per-file sha256 + a full tree copy) so drift can be detected and the original restored **without git**; captured by `setup.sh` **only when absent**, so re-running setup never blesses an edited tree as "original". Providers are pluggable for future non-install sources |
 
 **Design intent:**
 - Install runs only once; afterwards, opening a new shell automatically provides the Vise commands
@@ -80,9 +81,9 @@ setup.sh
   │
   ├── 1. detect tools (python3/git/7z/code)
   ├── 2. create/refresh .venv (from the detected python)
-  ├── 3. write .vise/tool_paths.json (python -> the .venv interpreter)
-  ├── 4. write .vise/python (record the .venv interpreter)
-  ├── 5. call register_adapters.py → .vise/registry.json + .vise/requirements.txt
+  ├── 3. write .vise/tool_paths.json + .vise/python (python -> the .venv interpreter)
+  ├── 4. call register_adapters.py → .vise/registry.json + .vise/requirements.txt
+  ├── 5. capture adapter baselines (only when absent, C13)
   ├── 6. probe indexes (official + mirrors), pip install into .venv
   ├── 7. idempotently inject shell rc → source vise_functions.sh
   └── 8. automatically run viseinit --all
@@ -316,6 +317,14 @@ visectl mcp                                              # MCP stdio bridge (JSO
 visectl doctor [--json]                                  # diagnose without running init_steps
 visectl clean [--reports] [--state] [--dry-run] [--json] # clean artifacts
 visectl manifest list|verify [--json]                    # ledger of files Vise wrote outside VISE_ROOT
+visectl adapter status [<id>] [--json]                   # clean / modified / unbaselined
+visectl adapter diff <id> [--json]                       # file-level drift against the baseline
+visectl adapter check [<id>] [--json]                    # gate: is the adapter protected?
+visectl adapter snapshot <id> -m "why" [--force]         # snapshot BEFORE editing an adapter
+visectl adapter list <id> [--json]                       # snapshot generations
+visectl adapter restore <id> [--gen N | --base] [--dry-run]  # roll back byte-for-byte
+visectl adapter promote <id> -m "why" [--dry-run]        # sediment the change as a patch (no commit)
+visectl adapter rebaseline <id> [--all] [--force]        # accept the current tree as the reference
 ```
 
 All commands support `--json` to output machine-readable content to stdout.
@@ -325,6 +334,38 @@ All commands support `--json` to output machine-readable content to stdout.
 behave predictably. Callers (humans and agents) must therefore pass **absolute
 paths** when referring to files elsewhere — e.g.
 `visectl run fast_search search "def main" "$PWD/adapters" --type py`.
+
+**`adapter_guard.py`** — the adapter update path (C13):
+
+The scenario: an agent runs an adapter, finds it solves *most* of the task but
+not all of it, and edits the adapter's source. The workflow that protects the
+original and sediments the improvement:
+
+```
+snapshot <id> -m "why"   → open a snapshot (.vise/snapshots/<id>/<ts>/)
+edit adapters/<Name>/    → file_patch is the sanctioned writer
+viseinit <id>            → validate (init_steps + healthcheck)
+  ├── failed → restore <id> [--gen N|--base]  → roll back byte-for-byte
+  └── worked → promote <id> -m "what changed" → .vise/patches/<id>/*.patch
+rebaseline <id> [--force] → accept the tree as the reference (closes snapshots)
+```
+
+- **Gate:** a modified adapter with **no open snapshot** is *unprotected*;
+  `visectl run` and `promote` refuse it (**exit 7**) with an actionable message.
+  `--allow-modified` is the escape hatch for a deliberate manual customization.
+  An *unbaselined* adapter passes through — an install predating baselines
+  keeps working; `doctor` / `adapter status` surface that state.
+- **git-free:** the baseline (L1, `core/baseline.py`) is the reference; restore
+  and promote never invoke git, so a zip/tarball install is protected
+  identically. With a repository present, `promote` still only writes the
+  patch — committing stays a separate, deliberate act.
+- **Never depends on the adapter:** restore/promote read the registry and
+  manifests, never the adapter's own code, so they work after an edit broke it.
+- **Retention:** the newest 5 snapshot generations per adapter; an open
+  snapshot is never pruned.
+- **Exit codes (guard domain):** `0` ok, `2` usage/input, `4` action impossible
+  (no such generation / nothing to promote), `7` refused (unprotected drift or
+  `rebaseline` needing `--force`). Distinct from the `viseinit` `0`–`6` map.
 
 **`vise_mcp.py`** MCP stdio bridge (optional Layer 4 front for MCP hosts):
 

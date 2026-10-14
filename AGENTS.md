@@ -14,6 +14,7 @@ viseinit --all                    # verify/init the whole library (exit codes 0-
 visectl run <id> <cmd> [args]     # invoke an adapter capability
 visectl read <id> <topic>         # read adapter knowledge content
 visectl manifest list|verify      # what Vise added outside VISE_ROOT (+ integrity)
+visectl adapter status|diff       # has an adapter drifted from its baseline?
 visectl doctor                    # diagnose without executing anything
 ```
 
@@ -31,6 +32,33 @@ All commands support `--json`. Stable exit codes are designed for agents.
 | Review-before-write edits | `file_patch` | `cat new | visectl run file_patch apply /abs/file` |
 | Fetch web content | `http_fetch` | `visectl run http_fetch get https://...` |
 | GitHub connectivity fix | `github_toolkit` | `visectl run github_toolkit --dry-run` |
+| Protect an adapter edit | `visectl adapter` | `visectl adapter snapshot <id> -m "why"` (see below) |
+
+## Modifying an adapter (when a tool almost solves the task)
+
+If an adapter solves *most* of the problem but not all of it, the fix is a
+protected edit — not an ad-hoc script beside it. Follow this order:
+
+```bash
+visectl adapter snapshot <id> -m "why the adapter is about to change"   # 1. mandatory
+# 2. edit adapters/<Name>/ source — use file_patch for the write
+viseinit <id>                                       # 3. validate
+visectl adapter restore <id> [--gen N|--base]       # 4a. failed -> roll back
+visectl adapter promote <id> -m "what changed"      # 4b. worked -> write a patch
+```
+
+- The snapshot is **mandatory**: a modified adapter with no open snapshot is
+  refused by `visectl run` and `promote` (exit `7`). Override only for a
+  deliberate manual customization: `visectl run --allow-modified <id> ...`.
+- `promote` writes `.vise/patches/<id>/*.patch` (a reviewable unified diff) and
+  **never commits** — committing is a separate, deliberate act.
+- `restore` never depends on the adapter's own code, so it still works after an
+  edit broke the adapter.
+- No git required: a zip/tarball install gets the same protection. The baseline
+  is captured at install time and never overwritten by re-running setup (use
+  `visectl adapter rebaseline <id> [--force]` to accept new state explicitly).
+- Read the adapter's own `read` topic before changing it, and re-check
+  `visectl adapter status` (or `doctor`) afterwards.
 
 ## Conventions
 
