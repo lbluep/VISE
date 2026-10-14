@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# thread - bootstrap script for JsonTool.
+set -euo pipefail
+
+ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VISE_ROOT="${VISE_ROOT:-$(cd "$ADAPTER_DIR/../.." && pwd)}"
+STATE_DIR="$VISE_ROOT/.vise/state/json_tool"
+PYTHON_BIN="${PYTHON:-python3}"
+
+mkdir -p "$STATE_DIR"
+"$PYTHON_BIN" "$ADAPTER_DIR/src/json_tool/thread_cli.py" \
+    --adapter-dir "$ADAPTER_DIR" \
+    --state-dir "$STATE_DIR"
+
+echo "[thread] json_tool initialized (state: $STATE_DIR)"

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "adapter_id": "json_tool",
+  "name": "JsonTool",
+  "version": "1.0.0",
+  "description": "jq-lite in pure Python: query, pretty-print, validate and inspect JSON from files or stdin.",
+  "required_cots": [
+    { "tool": "python", "min_version": "3.11" }
+  ],
+  "python_deps": [],
+  "init_steps": [
+    {
+      "name": "thread bootstrap",
+      "run": "bash",
+      "args": ["./thread"],
+      "timeout_sec": 60
+    }
+  ],
+  "healthcheck": {
+    "run": "$PYTHON",
+    "args": ["src/json_tool/main.py", "--self-test"],
+    "timeout_sec": 30
+  },
+  "entry_points": {
+    "cli": "src/json_tool/main.py",
+    "thread_cli": "src/json_tool/thread_cli.py"
+  },
+  "commands": [
+    {
+      "name": "get",
+      "description": "Extract a value by dot path (arrays indexed by number)",
+      "args": [
+        { "name": "file", "required": true, "description": "JSON file, or - for stdin" },
+        { "name": "path", "required": true, "description": "Dot path, e.g. summary.ok or items.0.name" }
+      ]
+    },
+    {
+      "name": "pretty",
+      "description": "Pretty-print JSON",
+      "args": [
+        { "name": "file", "required": true, "description": "JSON file, or - for stdin" }
+      ]
+    },
+    {
+      "name": "keys",
+      "description": "List object keys at a path (default: top level)",
+      "args": [
+        { "name": "file", "required": true, "description": "JSON file, or - for stdin" },
+        { "name": "path", "required": false, "description": "Dot path, default top level" }
+      ]
+    },
+    {
+      "name": "validate",
+      "description": "Check a file is valid JSON (exit 0/1, prints error location)",
+      "args": [
+        { "name": "file", "required": true, "description": "JSON file, or - for stdin" }
+      ]
+    },
+    {
+      "name": "read",
+      "description": "Read adapter knowledge content (resource access contract)",
+      "args": [
+        { "name": "topic", "required": true, "description": "usage" }
+      ]
+    }
+  ],
+  "provides": {
+    "category": "tools",
+    "tags": ["json", "data", "query", "jq"],
+    "description": "Query and inspect JSON without jq installed."
+  }
+}
