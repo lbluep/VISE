@@ -47,9 +47,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
         print(diff)
     if target.exists():
         shutil.copy2(target, target.with_name(target.name + ".bak"))
+        note = f" (backup: {target.name}.bak)"
+    else:
+        note = " (new file)"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(new, encoding="utf-8")
-    print(f"applied -> {target} (backup: {target.name}.bak)")
+    print(f"applied -> {target}{note}")
     return 0
 
 
