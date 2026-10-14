@@ -27,5 +27,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # A clean runner has no adapter tooling. Install the external tools that
+      # adapters declare in `required_cots` (fast_search needs ripgrep >= 13),
+      # otherwise `viseinit --all` exits 2 on a missing dependency.
+      - name: Install external tools required by adapters
+        run: |
+          sudo apt-get install -y ripgrep
+          rg --version
       - name: Smoke test
         run: bash tests/smoke.sh

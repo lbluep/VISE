@@ -8,7 +8,10 @@ and what you observed.
 Prerequisites: a checkout with `bash init/setup.sh` already run once (so
 `.vise/` and `.venv/` exist). `visectl` and `viseinit` are shell functions
 defined by `core/vise_functions.sh`; in a non-interactive shell use
-`.venv/bin/python core/visectl.py ...` instead.
+`.venv/bin/python core/visectl.py ...` instead. The external tools adapters
+declare in `required_cots` must also be installed — a clean environment with
+no tooling makes `viseinit --all` exit `2` (e.g. `fast_search` needs ripgrep
+`>= 13`). CI installs them; see `.github/workflows/ci.yml`.
 
 Legend: **T#** = test point id. "expect 0" means the process exit code is `0`.
 
