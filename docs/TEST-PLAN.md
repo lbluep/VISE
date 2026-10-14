@@ -203,6 +203,7 @@ from a checkout.
 | T10.19 | non-git sandbox: full lifecycle `snapshot → edit → run → restore → promote → replay` | identical outcomes to a clone; no `git` invocation anywhere in the guard |
 | T10.20 | `visectl adapter status --json` while an adapter is drifted | exit `1`, identical to the human-output run — the exit code reflects the outcome, never the requested format |
 | T10.21 | `visectl adapter snapshot <id> -m ""` (blank reason) | rejected, exit `2` — a blank reason carried no audit trail |
+| T10.22 | tamper a file inside `.vise/baseline/<id>/tree/` | `visectl adapter verify <id>` reports the file, exit `1`; `doctor` fails with a rebuild hint; `establish <id> --refresh` restores integrity (verify exit `0`). Unbaselined adapters are `[SKIP]`, not corruption |
 
 **Exit-code note:** the guard uses `7` for *refused* (unprotected drift,
 `rebaseline` needing `--force`), `4` for *action impossible* (no such

@@ -37,6 +37,7 @@ Exit codes (agent-friendly, baseline domain - distinct from the `viseinit`
   establish/path   0 ok, 2 usage or input error
   status           0 every adapter is clean, 1 some adapter is modified/unbaselined
   diff             0 no drift, 1 drift detected, 2 usage
+  verify           0 intact, 1 corrupted tree / no adapters, 2 usage
 """
 from __future__ import annotations
 
@@ -269,6 +270,37 @@ def state(adapter_id: str) -> str:
     return "clean" if d["clean"] else "modified"
 
 
+def verify(adapter_id: str) -> dict:
+    """Check the baseline tree copy still matches its manifest, byte for byte.
+
+    The manifest is the truth about *hashes*; the tree is the truth about
+    *bytes*. Drift detection trusts the manifest, and `restore --base` trusts
+    the tree - so a tampered or half-written tree would silently make restore
+    produce files that no longer match the manifest. This check turns that
+    silent corruption into a loud, actionable failure.
+    """
+    if adapter_dir(adapter_id) is None:
+        return {"adapter_id": adapter_id, "status": "unknown-adapter",
+                "ok": False}
+    base = load(adapter_id)
+    if base is None:
+        # Nothing to verify is not corruption: the adapter keeps working.
+        return {"adapter_id": adapter_id, "status": "unbaselined", "ok": True}
+    expected = base.get("files", {})
+    actual = {str(rel): sha256_of(path)
+              for rel, path in iter_files(tree_dir(adapter_id))}
+    changed = sorted(p for p in expected.keys() & actual.keys()
+                     if expected[p]["sha256"] != actual[p])
+    missing = sorted(expected.keys() - actual.keys())
+    added = sorted(actual.keys() - expected.keys())
+    corrupted = bool(changed or missing or added)
+    return {"adapter_id": adapter_id,
+            "status": "corrupted" if corrupted else "ok",
+            "ok": not corrupted,
+            "changed": changed, "missing": missing, "added": added,
+            "established_at": base.get("established_at")}
+
+
 # --- CLI ---------------------------------------------------------------------
 
 def cmd_establish(args: argparse.Namespace) -> int:
@@ -362,6 +394,42 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    """`verify [id] [--json]` - 0 intact, 1 corrupted/empty registry, 2 usage."""
+    if args.adapter_id and adapter_dir(args.adapter_id) is None:
+        print(f"baseline: unknown adapter '{args.adapter_id}'", file=sys.stderr)
+        return 2
+    ids = ([a["adapter_id"] for a in registry_adapters()]
+           if not args.adapter_id else [args.adapter_id])
+    rows = [verify(aid) for aid in ids]
+    bad = [r for r in rows if r["status"] == "corrupted"]
+    # Empty registry: broken install, not an all-clear. Unbaselined is NOT
+    # corruption - it is reported, but keeps the exit code clean.
+    exit_code = 1 if (bad or not rows) else 0
+    if args.json:
+        print(json.dumps(rows if not args.adapter_id else rows[0], indent=2))
+        return exit_code
+    if not rows:
+        print("baseline: no adapters registered. Run: bash init/setup.sh",
+              file=sys.stderr)
+        return exit_code
+    for r in rows:
+        if r["status"] == "ok":
+            print(f"[OK]   {r['adapter_id']}: tree matches manifest")
+        elif r["status"] == "unbaselined":
+            print(f"[SKIP] {r['adapter_id']}: no baseline to verify")
+        else:
+            print(f"[BAD]  {r['adapter_id']}: baseline corrupted")
+            for kind, mark in (("changed", "M"), ("missing", "D"),
+                               ("added", "A")):
+                for path in r[kind]:
+                    print(f"         {mark} {path}")
+            print(f"         rebuild with: .venv/bin/python core/baseline.py "
+                  f"establish {r['adapter_id']} --refresh "
+                  f"(only if the working tree is clean)")
+    return exit_code
+
+
 def cmd_path(args: argparse.Namespace) -> int:
     if args.adapter_id:
         print(manifest_path(args.adapter_id))
@@ -395,6 +463,11 @@ def main(argv: list[str] | None = None) -> int:
     p_df.add_argument("adapter_id")
     p_df.add_argument("--json", action="store_true")
 
+    p_ve = sub.add_parser("verify",
+                          help="check the baseline tree matches its manifest")
+    p_ve.add_argument("adapter_id", nargs="?")
+    p_ve.add_argument("--json", action="store_true")
+
     p_pa = sub.add_parser("path", help="print baseline paths")
     p_pa.add_argument("adapter_id", nargs="?")
 
@@ -402,7 +475,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "establish" and not args.all and not args.adapter_id:
         parser.error("establish requires an adapter_id or --all")
     return {"establish": cmd_establish, "status": cmd_status,
-            "diff": cmd_diff, "path": cmd_path}[args.command](args)
+            "diff": cmd_diff, "verify": cmd_verify,
+            "path": cmd_path}[args.command](args)
 
 
 if __name__ == "__main__":

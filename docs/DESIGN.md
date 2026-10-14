@@ -67,7 +67,7 @@ The current implementation is split into 4 layers, from the bottom up:
 | `init/pick_pip_index.py` | Probe official PyPI + public mirrors concurrently and print the fastest reachable index (used by `setup.sh` before `pip install`) |
 | `init/uninstall.sh` | One-shot uninstall: apply the uninstall ledger (remove/revert everything Vise added or modified outside `VISE_ROOT`), plus fallback wrapper scan and idempotent rc-marker cleanup; optionally clean up all generated artifacts |
 | `core/manifest.py` | Uninstall ledger writer: installers call `add` right after writing any file outside `VISE_ROOT` (upsert on kind+path, sha256 for created files, revert recipe for modified files); exposes `list`/`verify`/`uninstall-apply` |
-| `core/baseline.py` | Install-time reference state (C13): fingerprints each adapter into `.vise/baseline/<id>/` (per-file sha256 + a full tree copy) so drift can be detected and the original restored **without git**; captured by `setup.sh` **only when absent**, so re-running setup never blesses an edited tree as "original". Providers are pluggable for future non-install sources |
+| `core/baseline.py` | Install-time reference state (C13): fingerprints each adapter into `.vise/baseline/<id>/` (per-file sha256 + a full tree copy) so drift can be detected and the original restored **without git**; captured by `setup.sh` **only when absent**, so re-running setup never blesses an edited tree as "original". `verify` re-checks the tree copy against its manifest so a tampered or half-written baseline is a loud failure, not a silent one. Providers are pluggable for future non-install sources |
 
 **Design intent:**
 - Install runs only once; afterwards, opening a new shell automatically provides the Vise commands
@@ -322,6 +322,7 @@ visectl clean [--reports] [--state] [--dry-run] [--json] # clean artifacts
 visectl manifest list|verify [--json]                    # ledger of files Vise wrote outside VISE_ROOT
 visectl adapter status [<id>] [--json]                   # clean / modified / unbaselined
 visectl adapter diff <id> [--json]                       # file-level drift against the baseline
+visectl adapter verify [<id>] [--json]                   # baseline tree intact vs manifest (0 ok, 1 corrupted)
 visectl adapter check [<id>] [--json]                    # gate: is the adapter protected?
 visectl adapter snapshot <id> -m "why" [--force]         # snapshot BEFORE editing an adapter
 visectl adapter list <id> [--json]                       # snapshot generations

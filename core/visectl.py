@@ -21,6 +21,7 @@ Usage:
   visectl manifest verify                 # check those files are intact
   visectl adapter status                  # clean / modified / unbaselined
   visectl adapter diff <id>               # drift against the baseline
+  visectl adapter verify [id]             # baseline tree intact vs manifest
   visectl adapter snapshot <id> -m "why"  # snapshot BEFORE editing an adapter
   visectl adapter restore <id> [--base]   # roll back to the snapshot/baseline
   visectl adapter promote <id> -m "why"   # sediment the change as a patch
@@ -116,7 +117,12 @@ def cmd_list(args: argparse.Namespace) -> int:
         out = []
         for a in adapters:
             m = get_manifest(a["adapter_id"]) or {}
-            entry = {"adapter_id": a["adapter_id"], "path": a["path"]}
+            # Parity with the human table: discovery needs identity
+            # (name/version), not just the path — an agent matches a need
+            # against these before deciding describe/run.
+            entry = {"adapter_id": a["adapter_id"], "path": a["path"],
+                     "name": m.get("name", a["adapter_id"]),
+                     "version": m.get("version", "?")}
             if m.get("provides"):
                 entry["provides"] = m["provides"]
             out.append(entry)
@@ -348,6 +354,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             r["status"] = "failed"
             r["issues"].append(f"unprotected drift: {gate['note']}")
             all_ok = False
+
+        # A corrupted baseline tree makes `restore --base` silently produce
+        # bytes that no longer match the manifest - a usability failure too.
+        bv = _baseline().verify(a["adapter_id"])
+        r["baseline"] = bv["status"]
+        if bv["status"] == "corrupted":
+            r["status"] = "failed"
+            r["issues"].append(
+                f"baseline corrupted: {len(bv['changed'])} changed, "
+                f"{len(bv['missing'])} missing, {len(bv['added'])} added - "
+                f"run: visectl adapter verify {a['adapter_id']}")
+            all_ok = False
         results.append(r)
 
     if args.json:
@@ -387,7 +405,7 @@ def cmd_adapter(args: argparse.Namespace) -> int:
         print(f"visectl: {verb}: --message must not be blank - "
               "record WHY the adapter changes", file=sys.stderr)
         return 2
-    if verb in ("status", "diff"):
+    if verb in ("status", "diff", "verify"):
         return getattr(_baseline(), f"cmd_{verb}")(args)
     return getattr(_guard(), f"cmd_{verb}")(args)
 
@@ -548,6 +566,11 @@ def main() -> int:
     a_df = a_sub.add_parser("diff", help="file-level drift against the baseline")
     a_df.add_argument("adapter_id")
     a_df.add_argument("--json", action="store_true")
+
+    a_ve = a_sub.add_parser("verify",
+                            help="check the baseline tree matches its manifest")
+    a_ve.add_argument("adapter_id", nargs="?")
+    a_ve.add_argument("--json", action="store_true")
 
     a_sn = a_sub.add_parser("snapshot",
                             help="snapshot an adapter BEFORE editing it")

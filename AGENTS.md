@@ -14,11 +14,20 @@ viseinit --all                    # verify/init the whole library (exit codes 0-
 visectl run <id> <cmd> [args]     # invoke an adapter capability
 visectl read <id> <topic>         # read adapter knowledge content
 visectl manifest list|verify      # what Vise added outside VISE_ROOT (+ integrity)
-visectl adapter status|diff       # has an adapter drifted from its baseline?
+visectl adapter status|diff|verify  # drifted from baseline? baseline tree intact?
 visectl doctor                    # diagnose without executing anything
 ```
 
 All commands support `--json`. Stable exit codes are designed for agents.
+
+**Physical entry (non-interactive shells):** `visectl` / `viseinit` are shell
+functions loaded only by an interactive rc. In agent tool calls, scripts and
+CI, invoke the entry points directly:
+
+```bash
+.venv/bin/python core/visectl.py <cmd> ...
+.venv/bin/python core/viseinit.py <cmd> ...
+```
 
 ## Adapter capabilities (prefer these over ad-hoc generation)
 
@@ -60,16 +69,43 @@ visectl adapter promote <id> -m "what changed"      # 4b. worked -> write a patc
 - Read the adapter's own `read` topic before changing it, and re-check
   `visectl adapter status` (or `doctor`) afterwards.
 
+## Onboarding a new adapter (when nothing in the library fits)
+
+Copy the reference layout, fill the manifest, validate — in this order:
+
+1. Copy `adapters/ExampleAdapter_reference/` → `adapters/<NewName>/` (it is
+   the template for the full contract: manifest + `thread` + `src/` layout)
+2. Edit `vise.adapter.json`: unique `adapter_id`; `required_cots` with
+   `min_version` where needed; `entry_points.cli`; **declare `commands`**
+   (agents construct calls from these, no `--help` probing); `provides`
+   category/tags so `visectl list --json` can match it
+3. Implement the CLI (argv in, exit code out) and the `thread` bootstrap
+4. Re-register: `bash init/setup.sh` (idempotent) or `viseinit --all`
+5. Gate before calling it done: `viseinit <id>` exit `0` (init + healthcheck),
+   `visectl describe <id>` shows the declared surface, and one real
+   `visectl run <id> <cmd>` works end-to-end
+
+Full manifest contract: [docs/DESIGN.md](docs/DESIGN.md) §3.3 (field list, the
+two `init_steps` forms, the `read` resource convention).
+
 ## Conventions
 
 - **Absolute paths**: `visectl run` executes with the *adapter directory* as
   cwd — always pass absolute paths for files outside it.
 - **Discovery flow**: `list` → `describe` → `run`. Never guess arguments; read
   the manifest's declared `commands` first.
+- **Nothing fits?** Build the capability, then **onboard it as an adapter**
+  (one `vise.adapter.json` + `thread`, template: `adapters/ExampleAdapter_reference/`)
+  instead of leaving an ad-hoc script — one-off tools become reusable entries
+  in the library instead of disappearing with the session.
 - **Safety**: `viseinit --dry-run` shows what init would execute; `file_patch
   preview` shows a diff before any write.
 - **Persistence**: notes and tasks survive sessions — write durable knowledge
   to `note_keeper` instead of chat-only summaries.
+- **Generated state is off-limits**: never hand-edit anything under `.vise/`
+  (baselines, snapshots, patches, registry, reports). It is machine-written;
+  the sanctioned way to change a baseline is
+  `visectl adapter rebaseline <id> [--force]`, never editing its files.
 - **Ledger contract**: anything a script installs *outside* `VISE_ROOT`
   (e.g. `~/.local/bin` wrappers, rc-file blocks) must be recorded in the
   uninstall ledger at write time via
