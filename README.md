@@ -312,6 +312,7 @@ with Vise            validates paths,     via visectl             executes comma
 | `.vise/python` | `init/setup.sh` | Interpreter chosen for Vise shell functions (the `.venv` interpreter) |
 | `core/vise_functions.sh` | repo | Loader sourced by your shell startup; defines `visectl` and `viseinit` |
 | `.vise/state/<id>/state.json` | `thread` | Per-adapter registered state |
+| `.vise/installed.json` | `core/manifest.py` (via setup.sh / thread) | Uninstall ledger: every file Vise created or modified outside `VISE_ROOT` (e.g. `~/.local/bin` wrappers, rc blocks) |
 | `.vise/reports/viseinit_report_*.json` | `viseinit` | Unified init reports (+ `latest.json`) |
 
 ### Everyday commands
@@ -331,6 +332,8 @@ visectl run example_tool decode SGVsbG8=  # base64 decode; add --hex for hex
 visectl read example_tool readme       # read adapter knowledge content
 visectl mcp                            # MCP stdio bridge for AI-agent hosts
 visectl doctor                          # diagnose without executing init_steps
+visectl manifest list                   # what Vise added outside VISE_ROOT
+visectl manifest verify                 # integrity-check those files
 visectl clean --reports                 # remove >30-day reports
 visectl clean --state                   # remove orphaned adapter state
 viseinit --all --dry-run                # review planned steps, execute nothing
@@ -364,8 +367,18 @@ bash init/uninstall.sh --keep      # remove only shell integration, keep artifac
 bash init/uninstall.sh --dry-run   # preview what would be removed
 ```
 
+Uninstall is ledger-driven: `setup.sh` and adapter `thread` scripts record
+every file they create or modify outside `VISE_ROOT` in
+`.vise/installed.json` (query anytime with `visectl manifest list` /
+`visectl manifest verify`). Uninstall deletes recorded created-files whose
+checksum still matches; a file changed since install is **skipped** and
+reported for manual inspection (exit code `3`), never silently deleted.
+Recorded modifications (e.g. the rc marker block) are reverted. Two safety
+nets stay on top: a scan of `~/.local/bin` for Vise-generated wrappers, and
+the marker-based rc cleanup — so uninstall is complete even without a ledger.
+
 Artifacts are the `.vise/` directory (tool paths, registry, requirements,
-state, reports) and `.venv/`.
+state, reports, uninstall ledger) and `.venv/`.
 
 ### Requirements
 

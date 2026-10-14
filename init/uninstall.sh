@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
-# Vise uninstall: remove shell integration + optionally clean up artifacts.
+# Vise uninstall: remove everything Vise added or modified outside VISE_ROOT,
+# then optionally clean up artifacts.
+#
+# Removal is ledger-driven: installers (setup.sh, adapter thread scripts)
+# record every outside-VISE_ROOT file they create or modify in
+# .vise/installed.json (core/manifest.py). Uninstall applies that ledger:
+#   - created  files  -> deleted (only if the recorded checksum still matches;
+#                        a changed file is SKIPPED and reported for manual
+#                        inspection, never silently deleted)
+#   - modified files  -> revert recipe applied (rc marker block removed)
+# Two safety nets stay on top of the ledger:
+#   - fallback scan of ~/.local/bin for Vise-generated wrappers
+#     (Auto-generated header + VISE_ROOT reference)
+#   - marker-based rc block removal (idempotent, works without any ledger)
 #
 # Usage:
-#   bash init/uninstall.sh             # remove everything (shell + artifacts)
-#   bash init/uninstall.sh --keep      # only remove shell integration, keep artifacts
+#   bash init/uninstall.sh             # remove everything (outside files + artifacts)
+#   bash init/uninstall.sh --keep      # same, but keep .vise/ and .venv/ artifacts
 #   bash init/uninstall.sh --dry-run   # preview what would be removed
 set -euo pipefail
 
@@ -22,7 +35,7 @@ for arg in "$@"; do
     esac
 done
 
-# --- 1. Remove Vise block from shell rc files ---
+# --- Helpers ---
 detect_rc() {
     local shell_name
     shell_name="$(basename "${SHELL:-bash}")"
@@ -38,6 +51,20 @@ $DRY_RUN && prefix="[DRY RUN] "
 
 # Reuse the Python recorded by setup.sh, or fall back
 PYTHON_BIN="$(cat "$VISE_ROOT/.vise/python" 2>/dev/null || command -v python3 || echo python3)"
+
+# --- 1. Ledger-driven cleanup: files Vise added/modified outside VISE_ROOT ---
+# Exit 3 means drift-skipped files remain (needs manual action).
+MANIFEST_PY="$VISE_ROOT/core/manifest.py"
+LEDGER_RC=0
+if [[ -f "$MANIFEST_PY" ]]; then
+    if $DRY_RUN; then
+        "$PYTHON_BIN" "$MANIFEST_PY" uninstall-apply --dry-run || LEDGER_RC=$?
+    else
+        "$PYTHON_BIN" "$MANIFEST_PY" uninstall-apply || LEDGER_RC=$?
+    fi
+else
+    echo "${prefix}core/manifest.py not found - ledger cleanup skipped"
+fi
 
 remove_vise_block() {
     local file="$1"
@@ -67,6 +94,7 @@ open(path, 'w').write(text)
     (( found )) || echo "${prefix}Vise block not found in $file (already clean?)"
 }
 
+# --- 2. Remove Vise block from shell rc files (marker defense, idempotent) ---
 remove_vise_block "$RC_FILE"
 
 # Also check the other common rc file (in case shell changed)
@@ -76,7 +104,7 @@ if [[ -f "$OTHER_RC" ]]; then
     remove_vise_block "$OTHER_RC"
 fi
 
-# --- 2. Remove generated artifacts ---
+# --- 3. Remove generated artifacts ---
 if $KEEP_ARTIFACTS; then
     echo
     echo "${prefix}Keeping artifacts (--keep specified)"
@@ -98,6 +126,14 @@ fi
 
 echo
 echo "${prefix}Uninstall complete!"
+if (( LEDGER_RC == 3 )); then
+    echo
+    echo "Manual action needed: some Vise-installed files changed since"
+    echo "install and were NOT removed (SKIP! lines above). Inspect and"
+    echo "delete them yourself if they are no longer wanted."
+fi
 if $DRY_RUN; then
     echo "This was a dry run. Re-run without --dry-run to actually remove."
 fi
+# Propagate the ledger result: 3 = drift-skipped files need manual action.
+exit "$LEDGER_RC"

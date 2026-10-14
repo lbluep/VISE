@@ -17,6 +17,8 @@ Usage:
   visectl clean --state                   # remove state for adapters not in registry (P2-3)
   visectl clean --reports --state         # do both
   visectl clean --dry-run                 # show what would be removed, don't delete
+  visectl manifest list                   # files Vise added outside VISE_ROOT
+  visectl manifest verify                 # check those files are intact
 
 All commands support --json for machine-readable output to stdout.
 """
@@ -323,6 +325,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if all_ok else 1
 
 
+def cmd_manifest(args: argparse.Namespace) -> int:
+    """Read-only view of the outside-VISE_ROOT artifact ledger.
+
+    Writes (add/remove/uninstall-apply) stay in core/manifest.py, called by
+    installers (setup.sh / thread scripts) and init/uninstall.sh — not
+    exposed here to keep the agent-facing CLI read-only for the ledger.
+    """
+    import manifest as vise_manifest
+    if args.manifest_cmd == "list":
+        return vise_manifest.cmd_list(args)
+    return vise_manifest.cmd_verify(args)
+
+
 def cmd_clean(args: argparse.Namespace) -> int:
     """Clean up stale reports and orphaned adapter state (P2-3)."""
     dry_run = getattr(args, "dry_run", False)
@@ -443,6 +458,12 @@ def main() -> int:
                          help="show what would be removed without deleting")
     p_clean.add_argument("--json", action="store_true")
 
+    # Outside-VISE_ROOT artifact ledger (read-only view; see core/manifest.py)
+    p_manifest = sub.add_parser(
+        "manifest", help="query the ledger of files Vise added outside VISE_ROOT")
+    p_manifest.add_argument("manifest_cmd", choices=["list", "verify"])
+    p_manifest.add_argument("--json", action="store_true")
+
     args = parser.parse_args()
 
     # --json is per-subcommand
@@ -464,6 +485,8 @@ def main() -> int:
         return cmd_doctor(args)
     elif args.command == "clean":
         return cmd_clean(args)
+    elif args.command == "manifest":
+        return cmd_manifest(args)
     else:
         parser.print_help()
         return 2

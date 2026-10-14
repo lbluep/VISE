@@ -24,6 +24,18 @@ exec bash "$SRC" "\$@"
 EOF
 chmod +x "$BIN_DIR/congit"
 
+# Record the wrapper in the Vise uninstall ledger (idempotent upsert).
+# Best-effort: if recording fails, uninstall still catches the wrapper via
+# the fallback content scan (Auto-generated header + VISE_ROOT reference).
+VISE_MANIFEST_PYTHON="${PYTHON:-}"
+[[ -n "$VISE_MANIFEST_PYTHON" ]] || \
+  VISE_MANIFEST_PYTHON="$(cat "$VISE_ROOT/.vise/python" 2>/dev/null || command -v python3 || true)"
+if [[ -n "$VISE_MANIFEST_PYTHON" && -f "$VISE_ROOT/core/manifest.py" ]]; then
+  "$VISE_MANIFEST_PYTHON" "$VISE_ROOT/core/manifest.py" add created \
+      --path "$BIN_DIR/congit" --source "adapters/githubToolkit/thread" \
+    || echo "[thread] WARNING: could not record wrapper in manifest ledger" >&2
+fi
+
 # Record state
 cat > "$STATE_DIR/state.json" <<EOF
 {

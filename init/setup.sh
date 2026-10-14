@@ -133,9 +133,10 @@ detect_rc() {
 
 RC_FILE="$(detect_rc)"
 MARKER="# >>> Vise >>>"
+MARKER_END="# <<< Vise <<<"
 BLOCK="$MARKER
 [[ -f \"$VISE_ROOT/core/vise_functions.sh\" ]] && source \"$VISE_ROOT/core/vise_functions.sh\"
-# <<< Vise <<<"
+$MARKER_END"
 touch "$RC_FILE"
 if grep -qF "$MARKER" "$RC_FILE"; then
     echo "Shell startup already contains Vise block ($RC_FILE), skipped."
@@ -144,6 +145,14 @@ else
     printf '\n%s\n' "$BLOCK" >> "$RC_FILE"
     echo "Added Vise loader to $RC_FILE"
 fi
+
+# Record the rc modification in the uninstall ledger (idempotent upsert).
+# Best-effort: a failed record only means uninstall falls back to the
+# marker-based rc cleanup, which is why it must not abort the setup.
+"$VENV_PYTHON" "$VISE_ROOT/core/manifest.py" add modified \
+    --path "$RC_FILE" --source "init/setup.sh" \
+    --begin "$MARKER" --end "$MARKER_END" \
+    || echo "WARNING: could not record rc block in manifest ledger" >&2
 
 # --- 7. Run viseinit ---------------------------------------------------------
 echo
