@@ -335,7 +335,7 @@ visectl clean --reports                 # remove >30-day reports
 visectl clean --state                   # remove orphaned adapter state
 viseinit --all --dry-run                # review planned steps, execute nothing
 viseinit --all --ndjson                 # stream NDJSON progress events
-visereload                              # re-source shell integration (auto at prompt too)
+visereload                              # re-source shell integration (auto on next vise cmd)
 ```
 
 Note: `visectl run` executes adapter CLIs with the **adapter directory** as

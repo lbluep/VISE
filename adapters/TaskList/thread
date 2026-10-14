@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# thread - bootstrap script for TaskList.
+set -euo pipefail
+
+ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VISE_ROOT="${VISE_ROOT:-$(cd "$ADAPTER_DIR/../.." && pwd)}"
+STATE_DIR="$VISE_ROOT/.vise/state/task_list"
+PYTHON_BIN="${PYTHON:-python3}"
+
+mkdir -p "$STATE_DIR"
+"$PYTHON_BIN" "$ADAPTER_DIR/src/task_list/thread_cli.py" \
+    --adapter-dir "$ADAPTER_DIR" \
+    --state-dir "$STATE_DIR"
+
+echo "[thread] task_list initialized (state: $STATE_DIR)"

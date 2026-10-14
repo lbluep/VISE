@@ -154,6 +154,6 @@ echo
 echo "One-line setup complete! Open a new shell (or: source $RC_FILE),"
 echo "then try: viseinit --all"
 echo "Or use:  visectl list"
-echo "Already-open shells pick up adapter/shell changes automatically at the"
-echo "next prompt (vise auto-reload watcher); to force it now: visereload"
+echo "Already-open shells pick up adapter/shell changes on your next vise"
+echo "command (trigger-based reload); to force it now: visereload"
 echo "To uninstall: bash init/uninstall.sh"

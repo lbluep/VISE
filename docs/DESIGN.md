@@ -339,11 +339,12 @@ Launch via `visectl mcp`, or register `core/vise_mcp.py` in an MCP host config.
 ```
 
 The loader defines `visectl`, `viseinit`, and `visereload` (manual re-source).
-In interactive shells it also installs a `PROMPT_COMMAND` watcher that re-sources
-the loader when `.vise/registry.json` (adapter set changed via setup) or the
-loader itself is modified — already-open shells pick up changes at the next
-prompt, no manual `source ~/.bashrc` needed. Non-interactive shells skip the
-watcher.
+Reload is **trigger-based**: the staleness check (registry.json / loader mtime)
+runs only when a Vise command is invoked, and re-sources the loader before the
+command executes. This deliberately avoids a `PROMPT_COMMAND` watcher — a prompt
+hook executes on every prompt and is flagged by shell-hardening audits as a
+persistence / surprising-execution vector. Non-interactive shells skip the
+check.
 
 ---
 
