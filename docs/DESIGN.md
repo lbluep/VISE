@@ -36,6 +36,7 @@ The current implementation is split into 4 layers, from the bottom up:
 │  Layer 4: User / AI Agent entry                  │
 │  viseinit · visectl · vise_mcp                   │
 │  vise_functions.sh (shell integration)           │
+│  adapter_guard.py (snapshot/restore/promote)     │
 ├─────────────────────────────────────────────────┤
 │  Layer 3: Adapter Layer                          │
 │  vise.adapter.json · thread · CLI                │
@@ -47,6 +48,7 @@ The current implementation is split into 4 layers, from the bottom up:
 │  Layer 1: Setup                                  │
 │  init/setup.sh · init/register_adapters.py       │
 │  init/uninstall.sh · init/pick_pip_index.py      │
+│  core/baseline.py (install-time baseline)        │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -103,7 +105,8 @@ uninstall.sh
   ├── 2. remove the # >>> Vise >>> block from ~/.bashrc / ~/.zshrc
   │      (idempotent marker defense, works even without a ledger)
   ├── 3. (default) delete generated artifacts:
-  │     ├── .vise/  (tool_paths, registry, requirements, state, reports, ledger)
+  │     ├── .vise/  (tool_paths, registry, requirements, state, reports,
+  │     │             ledger, baseline, snapshots, patches)
   │     └── .venv/
   └── (--keep) keep artifacts, still clean everything outside VISE_ROOT
 ```
@@ -361,8 +364,10 @@ rebaseline <id> [--force] → accept the tree as the reference (closes snapshots
   patch — committing stays a separate, deliberate act.
 - **Never depends on the adapter:** restore/promote read the registry and
   manifests, never the adapter's own code, so they work after an edit broke it.
-- **Retention:** the newest 5 snapshot generations per adapter; an open
-  snapshot is never pruned.
+- **Retention:** the newest 5 snapshot generations per adapter, plus the
+  newest *open* snapshot regardless of age (it is the rollback point for work
+  in progress); older snapshots — including older open ones — are pruned, so
+  `.vise/` stays bounded.
 - **Exit codes (guard domain):** `0` ok, `2` usage/input, `4` action impossible
   (no such generation / nothing to promote), `7` refused (unprotected drift or
   `rebaseline` needing `--force`). Distinct from the `viseinit` `0`–`6` map.
@@ -439,6 +444,9 @@ Design intent:
 | `.vise/installed.json` | `core/manifest.py` (via setup.sh / thread) | Uninstall ledger: files Vise created/modified outside `VISE_ROOT`, with sha256 (created) or revert recipe (modified) | No |
 | `.vise/reports/viseinit_report_*.json` | `viseinit` | Initialization report (timestamp + summary + details) | No |
 | `.vise/reports/latest.json` | `viseinit` | Soft copy of the latest report | No |
+| `.vise/baseline/<id>/` | `init/setup.sh` (via `core/baseline.py`) | Pristine per-adapter reference (manifest + tree copy), captured once so drift is detectable and the original restorable without git | No |
+| `.vise/snapshots/<id>/` | `visectl adapter snapshot` | Rollback generations (bounded: newest 5 plus the newest open) | No |
+| `.vise/patches/<id>/` | `visectl adapter promote` | Reviewable unified diffs of accepted improvements (never auto-committed) | No |
 
 Cleanup methods: `visectl clean --reports` (reports >30 days old), `visectl clean --state` (orphan state),
 `bash init/uninstall.sh` (full cleanup).
@@ -499,3 +507,11 @@ Manifest `provides` field + `visectl list --category` / `--tag` filtering.
 
 `init/setup.sh` detects `$SHELL` and injects the matching rc file
 (`~/.bashrc` / `~/.zshrc`); `init/uninstall.sh` reverses the install.
+
+### C13 · Adapter guard (protect / roll back / sediment)
+
+Adapter edits are protected without git: `core/baseline.py` captures a pristine
+per-adapter reference at install time, `adapter_guard.py` opens snapshots
+before edits, restores byte-for-byte on rejection, and promotes accepted
+changes as reviewable patches (never auto-committed). Full flow in §3.4;
+contributor rules in [CONTRIBUTING.md](CONTRIBUTING.md).

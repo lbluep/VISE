@@ -132,8 +132,9 @@ visectl adapter promote <id> -m "what changed"   # accept: write .vise/patches/<
 - A modified adapter with no open snapshot is **unprotected**: `visectl run`
   and `promote` refuse it with exit `7`. Use the actions in the message, or
   `visectl run --allow-modified <id> ...` for a deliberate manual customization.
-- Snapshots are pruned to the newest 5 generations; an open snapshot is never
-  pruned.
+- Snapshots are bounded: the newest 5 generations are kept, plus the newest
+  *open* snapshot regardless of age; older snapshots (including older open
+  ones) are pruned, so `.vise/` stays bounded.
 
 ---
 

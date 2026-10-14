@@ -321,7 +321,7 @@ with Vise            validates paths,     via visectl             executes comma
 | `.vise/installed.json` | `core/manifest.py` (via setup.sh / thread) | Uninstall ledger: every file Vise created or modified outside `VISE_ROOT` (e.g. `~/.local/bin` wrappers, rc blocks) |
 | `.vise/reports/viseinit_report_*.json` | `viseinit` | Unified init reports (+ `latest.json`) |
 | `.vise/baseline/<id>/` | `init/setup.sh` (via `core/baseline.py`) | Pristine reference: per-file sha256 + tree copy, captured once so drift is detectable and the original restorable without git |
-| `.vise/snapshots/<id>/` | `visectl adapter snapshot` | Rollback points taken before an adapter is edited (newest 5 kept) |
+| `.vise/snapshots/<id>/` | `visectl adapter snapshot` | Rollback points taken before an adapter is edited (bounded: newest 5 plus the newest open) |
 | `.vise/patches/<id>/` | `visectl adapter promote` | Reviewable unified diffs of accepted improvements (never auto-committed) |
 
 ### Everyday commands
@@ -390,9 +390,9 @@ visectl adapter promote example_tool -m "what changed"  # accept: write a patch
   written **only when absent**, so re-running `setup.sh` never blesses an edited
   tree as "original"; accepting new state is explicit:
   `visectl adapter rebaseline example_tool [--force]`.
-- A **snapshot** (`.vise/snapshots/<id>/`, newest 5 generations) is the rollback
-  point; restoring never runs the adapter's own code, so it still works after an
-  edit broke the adapter.
+- A **snapshot** (`.vise/snapshots/<id>/`) is the rollback point; the newest
+  5 generations plus the newest open one are kept, and restoring never runs
+  the adapter's own code, so it still works after an edit broke the adapter.
 - `promote` writes a reviewable unified diff to `.vise/patches/<id>/*.patch` and
   **never commits** — with a repository, committing stays a deliberate act.
 - A modified adapter with no open snapshot is *unprotected*: `visectl run` and
