@@ -49,7 +49,9 @@ depends on whether `--json` was requested:
   snapshot                   0 ok (created, or already open), 2 unknown adapter
   list                       0 ok
   restore                    0 restored/dry-run, 2 unknown adapter,
-                             4 no such generation / no snapshot / no baseline
+                             4 no such generation / no snapshot / no baseline,
+                             7 refused (baseline or snapshot predates this
+                             Vise version; --force overrides)
   promote                    0 promoted/dry-run, 2 unknown adapter,
                              4 nothing to promote, 7 refused (C13 gate)
   check                      0 all protected, 2 no adapters registered,
@@ -207,6 +209,7 @@ def snapshot(adapter_id: str, reason: str, triggered_by: str | None = None,
         "adapter_id": adapter_id,
         "ts": ts,
         "created_at": _utcnow(),
+        "vise_version": vise_baseline.VISE_VERSION,
         "reason": reason,
         "triggered_by": triggered_by,
         "status": OPEN,
@@ -253,8 +256,13 @@ def _prune(adapter_id: str) -> list[str]:
 
 
 def restore(adapter_id: str, gen: int | None = None,
-            to_baseline: bool = False, dry_run: bool = False) -> dict:
-    """Reinstate a snapshot (or the baseline) byte-for-byte."""
+            to_baseline: bool = False, dry_run: bool = False,
+            force: bool = False) -> dict:
+    """Reinstate a snapshot (or the baseline) byte-for-byte.
+
+    A baseline captured under an older Vise release still holds THAT release's
+    bytes: after an in-place upgrade, `restore --base` would silently roll the
+    adapter back across the version boundary. That needs `--force`."""
     src = vise_baseline.adapter_dir(adapter_id)
     if src is None:
         return {"adapter_id": adapter_id, "status": "unknown-adapter"}
@@ -262,9 +270,21 @@ def restore(adapter_id: str, gen: int | None = None,
 
     if to_baseline:
         base_tree = vise_baseline.tree_dir(adapter_id)
-        if vise_baseline.load(adapter_id) is None or not base_tree.is_dir():
+        base = vise_baseline.load(adapter_id)
+        if base is None or not base_tree.is_dir():
             return {"adapter_id": adapter_id, "status": "no-baseline",
                     "reason": "run: bash init/setup.sh"}
+        base_ver = base.get("vise_version")
+        if base_ver is not None \
+                and base_ver != vise_baseline.VISE_VERSION and not force:
+            return {"adapter_id": adapter_id, "status": "version-mismatch",
+                    "baseline_version": base_ver,
+                    "current_version": vise_baseline.VISE_VERSION,
+                    "reason": f"baseline was captured under Vise v{base_ver} "
+                              f"(current v{vise_baseline.VISE_VERSION}); "
+                              "restoring it would roll this adapter back "
+                              "across the upgrade. Pass --force if that is "
+                              "really intended."}
         origin, ts = base_tree, "baseline"
     else:
         if not metas:
@@ -277,6 +297,17 @@ def restore(adapter_id: str, gen: int | None = None,
                               f"(0..{len(metas) - 1}, 0 = newest)"}
         origin, ts = _snapshot_tree_dir(adapter_id, metas[index]["ts"]), \
             metas[index]["ts"]
+        snap_ver = metas[index].get("vise_version")
+        if snap_ver is not None \
+                and snap_ver != vise_baseline.VISE_VERSION and not force:
+            return {"adapter_id": adapter_id, "status": "version-mismatch",
+                    "baseline_version": snap_ver,
+                    "current_version": vise_baseline.VISE_VERSION,
+                    "reason": f"snapshot {ts} was taken under Vise v{snap_ver} "
+                              f"(current v{vise_baseline.VISE_VERSION}); "
+                              "restoring it would roll this adapter back "
+                              "across the upgrade. Pass --force if that is "
+                              "really intended."}
 
     if dry_run:
         return {"adapter_id": adapter_id, "status": "dry-run", "from": ts,
@@ -422,16 +453,20 @@ def cmd_list(args: argparse.Namespace) -> int:
         print(f"guard: no snapshots for {args.adapter_id} "
               f"(keep at most {MAX_GENERATIONS})")
         return EXIT_OK
-    print(f"{'ts':<22} {'status':<8} {'while':<10} reason")
-    print("-" * 84)
+    print(f"{'ts':<22} {'status':<8} {'taken':<10} vise   reason")
+    print("-" * 92)
     for m in metas:
+        ver = m.get("vise_version") or "?"
+        flag = "" if ver in ("?", vise_baseline.VISE_VERSION) else " !=cur"
         print(f"{m['ts']:<22} {m.get('status', '?'):<8} "
-              f"{m.get('taken_while', '?'):<10} {m.get('reason', '')}")
+              f"{m.get('taken_while', '?'):<10} {ver:<6} "
+              f"{m.get('reason', '')}{flag}")
     return EXIT_OK
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
-    r = restore(args.adapter_id, args.gen, args.base, args.dry_run)
+    r = restore(args.adapter_id, args.gen, args.base, args.dry_run,
+                force=args.force)
     status = r["status"]
     if args.json:
         print(json.dumps(r, indent=2))
@@ -440,11 +475,15 @@ def cmd_restore(args: argparse.Namespace) -> int:
             else "restored"
         print(f"[RESTORE] {r['adapter_id']}: {prefix} from {r['from']} "
               f"({r['files']} files)")
+    elif status == "version-mismatch":
+        print(f"[REFUSE] {r['adapter_id']}: {r['reason']}", file=sys.stderr)
     else:
         print(f"[FAIL] {r['adapter_id']}: {status} - "
               f"{r.get('reason', '')}", file=sys.stderr)
     if status in ("restored", "dry-run"):
         return EXIT_OK
+    if status == "version-mismatch":
+        return EXIT_UNPROTECTED
     return EXIT_USAGE if status == "unknown-adapter" else EXIT_UNAVAILABLE
 
 
@@ -572,6 +611,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="generation to restore (0 = newest, default)")
     p_res.add_argument("--base", action="store_true",
                        help="restore the pristine baseline instead")
+    p_res.add_argument("--force", action="store_true",
+                       help="allow restoring a baseline from an older Vise "
+                            "version (rolls the adapter back across the "
+                            "upgrade)")
     p_res.add_argument("--dry-run", action="store_true")
     p_res.add_argument("--json", action="store_true")
 

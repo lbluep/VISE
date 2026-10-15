@@ -32,12 +32,25 @@ Further providers - "git HEAD" for a git clone, "release manifest" for a
 published tarball - register in `PROVIDERS` and nothing else here changes:
 callers only use `establish`, `load`, `drift` and `state`.
 
+Upgrades
+--------
+`init/setup.sh` stamps `.vise/version` with `core/version.py:VERSION`. When a
+later setup run sees a different stamp, the install was upgraded in place
+(zip/tarball extracted over it - there is no git to ask). `upgrade` then
+refreshes baselines: *clean* adapters are re-captured automatically (no user
+edits exist to protect), *modified* ones are reported for explicit review -
+their drift may mix vendor changes with user edits, and only the user can
+tell which. Every baseline manifest records the `vise_version` it was
+captured under, so `restore --base` can refuse to roll an adapter back to
+bytes from an older Vise.
+
 Exit codes (agent-friendly, baseline domain - distinct from the `viseinit`
 0-6 map):
-  establish/path   0 ok, 2 usage or input error
-  status           0 every adapter is clean, 1 some adapter is modified/unbaselined
-  diff             0 no drift, 1 drift detected, 2 usage
-  verify           0 intact, 1 corrupted tree / no adapters, 2 usage
+  establish/path/version  0 ok, 2 usage or input error
+  status                  0 every adapter is clean, 1 modified/unbaselined
+  diff                    0 no drift, 1 drift detected, 2 usage
+  verify                  0 intact, 1 corrupted tree / no adapters, 2 usage
+  upgrade                 0 all refreshed, 1 some adapters need review, 2 usage
 """
 from __future__ import annotations
 
@@ -51,9 +64,12 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from version import VERSION as VISE_VERSION
+
 VISE_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = VISE_ROOT / ".vise" / "registry.json"
 BASELINE_DIR = VISE_ROOT / ".vise" / "baseline"
+VERSION_FILE = VISE_ROOT / ".vise" / "version"
 BASELINE_VERSION = 1
 
 # Runtime noise, not adapter source: excluded from both the fingerprint and
@@ -162,6 +178,14 @@ def adapter_dir(adapter_id: str) -> Path | None:
     return None
 
 
+def stamped_version() -> str | None:
+    """The Vise version this install was last set up with, or None."""
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def manifest_path(adapter_id: str) -> Path:
     return BASELINE_DIR / adapter_id / "manifest.json"
 
@@ -224,6 +248,7 @@ def establish(adapter_id: str, provider: str = "install",
         "adapter_id": adapter_id,
         "provider": provider,
         "established_at": _utcnow(),
+        "vise_version": VISE_VERSION,
         "source_root": str(src.relative_to(VISE_ROOT)),
         "files": result["files"],
     }
@@ -299,6 +324,38 @@ def verify(adapter_id: str) -> dict:
             "ok": not corrupted,
             "changed": changed, "missing": missing, "added": added,
             "established_at": base.get("established_at")}
+
+
+def upgrade() -> list[dict]:
+    """Reconcile baselines after the install was upgraded in place.
+
+    Per adapter:
+      unbaselined  -> capture (a newly shipped adapter gets its baseline)
+      clean        -> refresh automatically: no user edits exist, and an
+                      unchanged tree means the release did not touch it - only
+                      the `vise_version` stamp and timestamp move
+      modified     -> NEVER touched automatically: the drift may mix vendor
+                      changes with user edits. Reported as needs-review with
+                      the drift summary; the user decides (promote their edits
+                      first, then `rebaseline --force`).
+    """
+    rows = []
+    for a in registry_adapters():
+        aid = a["adapter_id"]
+        d = drift(aid)
+        if not d["baselined"]:
+            r = establish(aid)
+            rows.append({"adapter_id": aid, "action": "baselined",
+                         "files": r.get("files", 0)})
+        elif d["clean"]:
+            r = establish(aid, refresh=True)
+            rows.append({"adapter_id": aid, "action": "refreshed",
+                         "files": r.get("files", 0)})
+        else:
+            rows.append({"adapter_id": aid, "action": "needs-review",
+                         "changed": len(d["changed"]), "added": len(d["added"]),
+                         "removed": len(d["removed"])})
+    return rows
 
 
 # --- CLI ---------------------------------------------------------------------
@@ -439,6 +496,48 @@ def cmd_path(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_version(_args: argparse.Namespace) -> int:
+    """Print the current Vise version (used by setup.sh for the stamp)."""
+    print(VISE_VERSION)
+    return 0
+
+
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    """`upgrade [--json]` - 0 all reconciled, 1 some need review, 2 usage."""
+    rows = upgrade()
+    pending = [r for r in rows if r["action"] == "needs-review"]
+    exit_code = 1 if (pending or not rows) else 0
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return exit_code
+    if not rows:
+        print("baseline: no adapters registered. Run: bash init/setup.sh",
+              file=sys.stderr)
+        return exit_code
+    for r in rows:
+        if r["action"] == "baselined":
+            print(f"[NEW]     {r['adapter_id']}: baseline captured "
+                  f"({r['files']} files)")
+        elif r["action"] == "refreshed":
+            print(f"[REFRESH] {r['adapter_id']}: clean, re-stamped for "
+                  f"v{VISE_VERSION}")
+        else:
+            print(f"[REVIEW]  {r['adapter_id']}: drift after upgrade - "
+                  f"{r['changed']} changed, {r['added']} added, "
+                  f"{r['removed']} removed")
+    if pending:
+        print("\nDrift after an upgrade may mix vendor changes with your "
+              "edits - only you can tell which.")
+        print("  If you did NOT edit the adapter:  visectl adapter "
+              "rebaseline <id> --force")
+        print("  If you DID edit it: promote your edits first "
+              "(visectl adapter promote <id> -m \"...\"), then rebaseline "
+              "--force.")
+        print("  Do NOT `restore --base` an upgraded adapter: the baseline "
+              "still holds the OLD release's bytes.")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="baseline.py",
@@ -471,12 +570,18 @@ def main(argv: list[str] | None = None) -> int:
     p_pa = sub.add_parser("path", help="print baseline paths")
     p_pa.add_argument("adapter_id", nargs="?")
 
+    sub.add_parser("version", help="print the current Vise version")
+
+    p_up = sub.add_parser("upgrade",
+                          help="reconcile baselines after a Vise upgrade")
+    p_up.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     if args.command == "establish" and not args.all and not args.adapter_id:
         parser.error("establish requires an adapter_id or --all")
     return {"establish": cmd_establish, "status": cmd_status,
-            "diff": cmd_diff, "verify": cmd_verify,
-            "path": cmd_path}[args.command](args)
+            "diff": cmd_diff, "verify": cmd_verify, "path": cmd_path,
+            "version": cmd_version, "upgrade": cmd_upgrade}[args.command](args)
 
 
 if __name__ == "__main__":

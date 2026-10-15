@@ -204,8 +204,12 @@ from a checkout.
 | T10.20 | `visectl adapter status --json` while an adapter is drifted | exit `1`, identical to the human-output run — the exit code reflects the outcome, never the requested format |
 | T10.21 | `visectl adapter snapshot <id> -m ""` (blank reason) | rejected, exit `2` — a blank reason carried no audit trail |
 | T10.22 | tamper a file inside `.vise/baseline/<id>/tree/` | `visectl adapter verify <id>` reports the file, exit `1`; `doctor` fails with a rebuild hint; `establish <id> --refresh` restores integrity (verify exit `0`). Unbaselined adapters are `[SKIP]`, not corruption |
+| T10.23 | bump `core/version.py`, touch one adapter's source (vendor change), re-run `setup.sh` | upgrade detected (`vX -> vY`); clean adapters `[REFRESH]` re-stamped, the touched one `[REVIEW]` with drift summary and guidance; `.vise/version` updated; setup still exits `0` |
+| T10.24 | after T10.23, `visectl adapter restore <id> --base` on the not-yet-rebaselined adapter | `[REFUSE]`, exit `7` — the baseline still holds the old release's bytes; `--force` restores them; a refreshed adapter's `restore --base` works normally. Baselines without `vise_version` (pre-stamp installs) restore without refusal |
+| T10.25 | snapshot taken under vX, then bump version and re-run setup | `adapter list` flags the snapshot `!=cur`; `restore` (no `--base`) of that generation is refused, exit `7`; `--force` restores it |
 
 **Exit-code note:** the guard uses `7` for *refused* (unprotected drift,
-`rebaseline` needing `--force`), `4` for *action impossible* (no such
-generation / nothing to promote) and `2` for usage/input errors. These are
-distinct from the `viseinit` `0`–`6` map and from the ledger's `1`/`3`.
+`rebaseline` needing `--force`, cross-version `restore --base`), `4` for
+*action impossible* (no such generation / nothing to promote) and `2` for
+usage/input errors. These are distinct from the `viseinit` `0`–`6` map and
+from the ledger's `1`/`3`.

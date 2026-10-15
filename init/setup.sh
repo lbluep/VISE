@@ -6,6 +6,8 @@
 # 4. (Re)generate .vise/registry.json + .vise/requirements.txt by scanning
 #    adapters/ (generated artifacts, not repo-managed)
 # 5. Capture the adapter baseline (C13; only when absent - see core/baseline.py)
+#    + stamp .vise/version; on a version change, reconcile baselines
+#    (clean adapters re-stamp automatically, modified ones are reported)
 # 6. Install adapter Python dependencies into .venv
 # 7. Update shell startup to auto-load Vise commands
 # 8. Run viseinit to initialize all Vise configurations
@@ -107,6 +109,23 @@ echo
 echo "== Capturing adapter baselines =="
 "$VENV_PYTHON" "$VISE_ROOT/core/baseline.py" establish --all \
     || echo "WARNING: baseline capture failed; 'visectl adapter status' will report unbaselined" >&2
+
+# --- 5b. Version stamp + upgrade reconciliation ------------------------------
+# `.vise/version` records which Vise release this install was set up with. A
+# mismatch means the tree was upgraded in place (zip/tarball extracted over
+# it); baselines then need reconciling: clean adapters re-stamp silently,
+# modified ones are reported for review - never auto-accepted (C13).
+CURRENT_VERSION="$("$VENV_PYTHON" "$VISE_ROOT/core/baseline.py" version)"
+STAMP_FILE="$VISE_ROOT/.vise/version"
+STAMPED=""
+[[ -f "$STAMP_FILE" ]] && STAMPED="$(cat "$STAMP_FILE")"
+if [[ -n "$STAMPED" && "$STAMPED" != "$CURRENT_VERSION" ]]; then
+    echo
+    echo "== Vise upgrade detected (v$STAMPED -> v$CURRENT_VERSION): reconciling baselines =="
+    "$VENV_PYTHON" "$VISE_ROOT/core/baseline.py" upgrade \
+        || echo "WARNING: some adapters need review after the upgrade (see above)" >&2
+fi
+echo "$CURRENT_VERSION" > "$STAMP_FILE"
 
 # --- 6. Install adapter Python dependencies into .venv ---------------------
 REQ_FILE="$VISE_ROOT/.vise/requirements.txt"

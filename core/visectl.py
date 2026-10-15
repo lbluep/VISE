@@ -593,6 +593,9 @@ def main() -> int:
                       help="generation to restore (0 = newest, default)")
     a_rs.add_argument("--base", action="store_true",
                       help="restore the pristine baseline instead")
+    a_rs.add_argument("--force", action="store_true",
+                      help="allow restoring a baseline from an older Vise "
+                           "version")
     a_rs.add_argument("--dry-run", action="store_true")
     a_rs.add_argument("--json", action="store_true")
 
