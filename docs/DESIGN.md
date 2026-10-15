@@ -453,8 +453,9 @@ Design intent:
 | `.vise/patches/<id>/` | `visectl adapter promote` | Reviewable unified diffs of accepted improvements (never auto-committed) | No |
 | `.vise/version` | `init/setup.sh` | Release stamp of the last setup run; a mismatch on the next run triggers baseline reconciliation (`baseline.py upgrade`) | No |
 
-Cleanup methods: `visectl clean --reports` (reports >30 days old), `visectl clean --state` (orphan state),
-`bash init/uninstall.sh` (full cleanup).
+Cleanup methods: `visectl clean --reports` (reports >30 days old), `visectl clean --state` (orphan residue:
+`state/`, `baseline/`, `snapshots/`, `patches/` entries whose adapter is gone from the registry — reported by
+`visectl doctor`, removed only here, explicitly), `bash init/uninstall.sh` (full cleanup).
 
 ---
 

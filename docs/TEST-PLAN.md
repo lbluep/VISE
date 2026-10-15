@@ -207,6 +207,7 @@ from a checkout.
 | T10.23 | bump `core/version.py`, touch one adapter's source (vendor change), re-run `setup.sh` | upgrade detected (`vX -> vY`); clean adapters `[REFRESH]` re-stamped, the touched one `[REVIEW]` with drift summary and guidance; `.vise/version` updated; setup still exits `0` |
 | T10.24 | after T10.23, `visectl adapter restore <id> --base` on the not-yet-rebaselined adapter | `[REFUSE]`, exit `7` — the baseline still holds the old release's bytes; `--force` restores them; a refreshed adapter's `restore --base` works normally. Baselines without `vise_version` (pre-stamp installs) restore without refusal |
 | T10.25 | snapshot taken under vX, then bump version and re-run setup | `adapter list` flags the snapshot `!=cur`; `restore` (no `--base`) of that generation is refused, exit `7`; `--force` restores it |
+| T10.26 | manually create `.vise/{baseline,snapshots,patches,state}/ghost_tool/`, remove `ghost_tool` from `adapters/` so it is absent from registry | `visectl doctor` prints "Orphan state" with `ghost_tool` (exit `0` — not a failure); `clean --state --dry-run` lists all four prefixed (`baseline/ghost_tool`, `snapshots/ghost_tool`, `patches/ghost_tool`, `state/ghost_tool`); actual `clean --state` removes them; subsequent `doctor` no longer reports orphan |
 
 **Exit-code note:** the guard uses `7` for *refused* (unprotected drift,
 `rebaseline` needing `--force`, cross-version `restore --base`), `4` for

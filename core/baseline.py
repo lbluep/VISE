@@ -178,6 +178,30 @@ def adapter_dir(adapter_id: str) -> Path | None:
     return None
 
 
+def orphan_ids() -> dict[str, list[str]]:
+    """Generated state whose adapter is no longer in the registry.
+
+    Returns {"baseline": [...], "snapshots": [...], "patches": [...]} (only
+    non-empty kinds). Removing an adapter from `adapters/` leaves this residue
+    behind; it is reported (doctor) and cleaned explicitly (`visectl clean
+    --state`), never auto-deleted - an orphan's baseline tree is the last
+    surviving copy of that adapter's original bytes, and its patches may hold
+    unpublished improvements.
+    """
+    known = {a["adapter_id"] for a in registry_adapters()}
+    out: dict[str, list[str]] = {}
+    for name, root in (("baseline", BASELINE_DIR),
+                       ("snapshots", VISE_ROOT / ".vise" / "snapshots"),
+                       ("patches", VISE_ROOT / ".vise" / "patches")):
+        if not root.is_dir():
+            continue
+        orphans = sorted(d.name for d in root.iterdir()
+                         if d.is_dir() and d.name not in known)
+        if orphans:
+            out[name] = orphans
+    return out
+
+
 def stamped_version() -> str | None:
     """The Vise version this install was last set up with, or None."""
     try:

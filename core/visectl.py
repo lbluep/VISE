@@ -368,8 +368,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             all_ok = False
         results.append(r)
 
+    # P2: residue from adapters removed from adapters/ - reported, never a
+    # failure (it breaks nothing), and never auto-deleted (orphan baselines
+    # and patches may be the last copy of unpublished work).
+    orphans = _baseline().orphan_ids()
+
     if args.json:
-        print(json.dumps(results, indent=2))
+        print(json.dumps({"adapters": results, "orphans": orphans},
+                         indent=2))
     else:
         for r in results:
             mark = "[OK]" if r["status"] == "ok" else "[FAIL]"
@@ -386,6 +392,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                           if guard.get("open_snapshot") else guard["state"])
                 print(f"       guard: {detail}")
         print(f"\nDoctor: {sum(r['status']=='ok' for r in results)}/{len(results)} OK")
+        if orphans:
+            flat = sorted({aid for ids in orphans.values() for aid in ids})
+            print(f"Orphan state (adapter gone, generated files remain): "
+                  f"{', '.join(flat)}")
+            print("  -> inspect or remove with: visectl clean --state [--dry-run]")
 
     return 0 if all_ok else 1
 
@@ -455,7 +466,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
         result["kept"]["reports"] = kept_reports
 
     # --- Clean orphaned state (adapter dirs not in registry) ---
-    if do_state and STATE_DIR.is_dir():
+    if do_state:
         try:
             registered_ids = {a["adapter_id"] for a in get_registry()}
         except SystemExit:
@@ -464,15 +475,27 @@ def cmd_clean(args: argparse.Namespace) -> int:
             result["state_cleanup_skipped"] = "registry not found"
         removed_state = []
         kept_state = []
-        for d in sorted(STATE_DIR.iterdir()):
-            if not d.is_dir():
+        # STATE_DIR holds runtime state; the guard trio (baseline/snapshots/
+        # patches) holds an adapter's protection history. Same orphan rule:
+        # gone from the registry -> residue to report and remove. Orphan
+        # baselines/patches may be the last copy of unpublished work, so they
+        # are listed by kind in the output and only removed here, explicitly.
+        orphan_dirs = [STATE_DIR, VISE_ROOT / ".vise" / "baseline",
+                       VISE_ROOT / ".vise" / "snapshots",
+                       VISE_ROOT / ".vise" / "patches"]
+        for root in orphan_dirs:
+            if not root.is_dir():
                 continue
-            if d.name not in registered_ids:
-                removed_state.append(d.name)
-                if not dry_run:
-                    shutil.rmtree(d)
-            else:
-                kept_state.append(d.name)
+            for d in sorted(root.iterdir()):
+                if not d.is_dir():
+                    continue
+                entry = f"{root.name}/{d.name}"
+                if d.name not in registered_ids:
+                    removed_state.append(entry)
+                    if not dry_run:
+                        shutil.rmtree(d)
+                else:
+                    kept_state.append(entry)
         result["removed"]["state"] = removed_state
         result["kept"]["state"] = kept_state
 
