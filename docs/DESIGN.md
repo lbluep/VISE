@@ -521,3 +521,76 @@ per-adapter reference at install time, `adapter_guard.py` opens snapshots
 before edits, restores byte-for-byte on rejection, and promotes accepted
 changes as reviewable patches (never auto-committed). Full flow in §3.4;
 contributor rules in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+The provider slot in `baseline.py` is an extension point, not a
+distribution-format feature: a release-manifest provider would read a
+known-good hash list kept as an ordinary file *inside* the release tree, so it
+rides along with any channel (zip, tarball, rsync, clone) rather than relying
+on one. That manifest shares its files' own delivery channel and therefore
+carries no independent authority — it is advisory input to `upgrade` only,
+never a licence for `restore --base` to act or for user edits to be dropped
+silently.
+
+Two ordering rules close the holes in that sketch, plus one provenance rule:
+
+- **Compare before overwrite.** An in-place extract destroys the user's edits
+  to vendor-shipped files before any reconciler can see them, so the
+  three-way compare must run against the *pre-extraction* tree. The safe flow
+  stages the new release in a scratch directory, computes the per-file plan,
+  and only then applies it. A raw extract-over forfeits conflict detection
+  entirely; it is only acceptable behind a snapshot taken beforehand — the
+  edits stay recoverable through C13, but after the fact nothing can tell
+  them apart from vendor changes.
+
+- **Presence is a first-class state, not just hash equality.** The per-file
+  classifier keys on (old manifest, new manifest, disk): a file dropped from
+  the new manifest is a *vendor deletion* — refresh removes it, unless the
+  user edited it, in which case REVIEW; a file new in the manifest and absent
+  on disk is a *vendor addition* — install it; a file on disk appearing in
+  neither manifest is a *user file* — keep, never touch. Without these cases
+  a vendor deletion is misread as a user edit and kept forever.
+
+- **Advisory input becomes durable.** The moment the manifest's hashes are
+  written into a new baseline they stop being a hint and start being the
+  reference `restore --base` acts on — a forged or corrupted manifest would
+  reach `restore` transitively. The mitigation is not to pretend the leak
+  away but to make provenance visible: every baseline records which provider
+  produced it and which release it describes, and `restore --base` prints
+  that provenance before touching anything, so the user sees *what* they are
+  rolling back to, not just *that* they are rolling back.
+
+Five precision rules follow:
+
+- **The old reference must be vendor-sourced.** The three-way compare is only
+  meaningful when the "old" side is genuinely vendor bytes. A baseline
+  re-established by `rebaseline` — accepting a user-edited tree — no longer
+  qualifies, and the `provider` field cannot currently tell the two apart.
+  Adapters in that state degrade to whole-adapter REVIEW until a pristine
+  reference is re-fetched, because there is no trustworthy vendor side left
+  to diff against.
+
+- **Decisions are per-file; the refresh is partial.** P0's clean/modified
+  verdict is per-adapter, but the reconciler classifies per file, so the new
+  baseline is assembled file by file: vendor bytes for vendor-owned files,
+  the user's disk bytes for user files. What "clean" means, what `upgrade`'s
+  exit codes report (refreshed / kept / review tallies), and what
+  `restore --base` restores all follow from that assembly and must be
+  redefined accordingly.
+
+- **"Matches neither" is unknown origin, not a verdict.** Across a skipped
+  release (v0.1 → v0.5) a vendor file changed twice matches neither the old
+  baseline nor the new manifest. REVIEW is a hint that Vise cannot attribute
+  the change — the report must say so, not accuse the user of an edit.
+
+- **The manifest carries the release it describes.** A release-version field
+  lets Vise confirm the manifest matches the tree being installed, detect
+  downgrades and same-version re-extracts, and reconcile against
+  `.vise/version` — rather than trusting whichever file happens to sit at the
+  fixed path.
+
+- **The provider contract needs a verify shape.** `PROVIDERS` currently
+  returns `{"source_dir", "files"}` and `establish` always copies
+  `source_dir` into `tree/`. A manifest provider has hashes; bytes only exist
+  when a new tree was staged. The contract must distinguish copy-producing
+  providers (install scan, staged tree) from hash-only verification, or
+  `establish` will label whatever happens to be on disk as "original".

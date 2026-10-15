@@ -29,8 +29,9 @@ Baselines are produced by a *provider*: a callable that fingerprints one
 adapter directory and names the tree to copy. This module ships one,
 `install_scan` (fingerprint the working tree exactly as it sits on disk).
 Further providers - "git HEAD" for a git clone, "release manifest" for a
-published tarball - register in `PROVIDERS` and nothing else here changes:
-callers only use `establish`, `load`, `drift` and `state`.
+published release (the manifest is an ordinary in-tree file, so it rides
+along with any distribution format) - register in `PROVIDERS` and nothing
+else here changes: callers only use `establish`, `load`, `drift` and `state`.
 
 Upgrades
 --------
