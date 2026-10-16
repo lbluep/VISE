@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "release": "0.1.0",
+  "generated_at": "2026-10-15T09:35:16Z",
+  "adapters": {
+    "example_tool": {
+      "path": "adapters/ExampleAdapter_reference",
+      "files": {
+        "README.md": {
+          "sha256": "cd080b9c23c0e4a6bc0aac0777d65664962814ee922b50c26c1067f21a7b966d",
+          "size": 1304
+        },
+        "src/example_tool/__init__.py": {
+          "sha256": "6943c23800b353866b0217d81ecda992acf86895445a3b49cd943a0cf5e28e74",
+          "size": 76
+        },
+        "src/example_tool/main.py": {
+          "sha256": "3a8ca588a9a3b9d59c05cec1af6803ee3c18b1cf763e0c71ad4ae563883aa9ff",
+          "size": 2757
+        },
+        "src/example_tool/thread_cli.py": {
+          "sha256": "bffafbf23043b4f9bb28c46e18247f79c2c53282bbfb53ed44dc6f3d4aaab72e",
+          "size": 1990
+        },
+        "thread": {
+          "sha256": "ca1a03d7fb87499c05d5bfe2f405f6c602e7eb91979b9865287801f395b066d6",
+          "size": 644
+        },
+        "vise.adapter.json": {
+          "sha256": "3c069b1d12daf582b352791afbf57aae665d1ca6913bb2aa96fc0506f38b0b3a",
+          "size": 1474
+        },
+        "vise_extensions.sh": {
+          "sha256": "eee7e42ce29a00a8d237f435b2f424e8e6be11f97cfce974eb071311a2008052",
+          "size": 450
+        }
+      }
+    },
+    "fast_search": {
+      "path": "adapters/FastSearch",
+      "files": {
+        "README.md": {
+          "sha256": "2f106a09b14b96df8f719620b9d19720c77610444b45597c5d1b612f7b412a9b",
+          "size": 562
+        },
+        "src/fast_search/__init__.py": {
+          "sha256": "04887ee0db2be9d88b525ccbfad5499488429700623c3f448d2f03a478b73816",
+          "size": 57
+        },
+        "src/fast_search/main.py": {
+          "sha256": "7f22ab7eaa38c2d12e7efe4f15e94fb865d4d66204a0bc697d8ae55467fe39ac",
+          "size": 4681
+        },
+        "src/fast_search/thread_cli.py": {
+          "sha256": "600ecec2341158327f8770b6628073a1f171ae6d6483020a578fae93396846a8",
+          "size": 1674
+        },
+        "thread": {
+          "sha256": "4624f914fa0ace6db8901944924c8d87938a0a5202c0e5979240edc5876cb804",
+          "size": 491
+        },
+        "vise.adapter.json": {
+          "sha256": "635436f68f21672261bcd2885136e00527e1aca7b032a1fa09a1e8cff8c4fe66",
+          "size": 2134
+        }
+      }
+    },
+    "file_patch": {
+      "path": "adapters/FilePatch",
+      "files": {
+        "README.md": {
+          "sha256": "41d195bfca21f4d749383d8e349bee13fa03d7bb479d144df6d9100382933b0b",
+          "size": 495
+        },
+        "src/file_patch/__init__.py": {
+          "sha256": "0ff2f3a7cb640dadca5aac5ad8fb33fcda0d26aef47a757172a9384d9a78dfc4",
+          "size": 62
+        },
+        "src/file_patch/main.py": {
+          "sha256": "3bb698dbb7028a10029a2c2f88d6848205144155a5e43c7e5ed2bbf775012a24",
+          "size": 3855
+        },
+        "src/file_patch/thread_cli.py": {
+          "sha256": "89d0b9e3286ad2356e30b45a506b4720d03325a157f20e3a81c6e79c964d979c",
+          "size": 1673
+        },
+        "thread": {
+          "sha256": "d77ee61a4f547b14128aed4d05c6480f978c44a8150f0ac61682377d0b282fc3",
+          "size": 487
+        },
+        "vise.adapter.json": {
+          "sha256": "eac4a41d637d58472df95b686ee65228aa51a328dc928656f8430be9e27a3855",
+          "size": 1947
+        }
+      }
+    },
+    "http_fetch": {
+      "path": "adapters/HttpFetch",
+      "files": {
+        "README.md": {
+          "sha256": "ff6e645ab65b998df167323fc59ebae67464ac20b45e4e2f9a04b37064b9986e",
+          "size": 404
+        },
+        "src/http_fetch/__init__.py": {
+          "sha256": "53a22d6f8eed4c81c07a5ba8b42b18b297be35225ee39f9cef0926ce4680c613",
+          "size": 49
+        },
+        "src/http_fetch/main.py": {
+          "sha256": "0e8fd6d5f9137bf96e7b8ad7f2392932ac5725aea00133a6d226d6d60a2466df",
+          "size": 3999
+        },
+        "src/http_fetch/thread_cli.py": {
+          "sha256": "e78c44884468eb6306b4c863ae5b4e75c6999bb3c0f4ba5793af8aa84122a48c",
+          "size": 1673
+        },
+        "thread": {
+          "sha256": "98acd6bad85bb78c27429333c5cb0d6cee8b33346018dfe6c9602919a68af167",
+          "size": 487
+        },
+        "vise.adapter.json": {
+          "sha256": "df5c626c5622e462b867f3906cec86e85b812835e099343d58a2c40ce235c324",
+          "size": 1695
+        }
+      }
+    },
+    "json_tool": {
+      "path": "adapters/JsonTool",
+      "files": {
+        "README.md": {
+          "sha256": "5929deb3a096cb8653ef5e3b6ae0f1b563121100eaa7668604d253409b279377",
+          "size": 395
+        },
+        "src/json_tool/__init__.py": {
+          "sha256": "81bb303cb1e58314452139fb74ad3ec66712dba736b26264eb63ab43aa75544d",
+          "size": 51
+        },
+        "src/json_tool/main.py": {
+          "sha256": "98250608252e41520eacd63a8cf4bace10f01f2b93be88959f86d31f21868a03",
+          "size": 4876
+        },
+        "src/json_tool/thread_cli.py": {
+          "sha256": "80e195e20725a50cec96bc04b81ca28c3c7661b56d003ec83e5a3e6d2c809b34",
+          "size": 1672
+        },
+        "thread": {
+          "sha256": "bcaa20d55410aa7c69286fc803205db957bcf8f225e2154afdaa2db964745434",
+          "size": 483
+        },
+        "vise.adapter.json": {
+          "sha256": "6ac0f67e3db2e6457b2dad9ffd007b49a89f2b09417bfef493abfd27852c87c7",
+          "size": 2141
+        }
+      }
+    },
+    "note_keeper": {
+      "path": "adapters/NoteKeeper",
+      "files": {
+        "README.md": {
+          "sha256": "9ac1b04ce50435f0f36e5441229220c840df0104abb0b0acb0facfde1bf45266",
+          "size": 616
+        },
+        "src/note_keeper/__init__.py": {
+          "sha256": "a1e8c9ca7a8feaeec3ab4fb6ab5463c6128be185258997d5128c3fd8b3e0ca54",
+          "size": 52
+        },
+        "src/note_keeper/main.py": {
+          "sha256": "548e9fde62b4102cce1611cb0a018ac3e39391b1d0ae0b91f69daf639e161c52",
+          "size": 6855
+        },
+        "src/note_keeper/thread_cli.py": {
+          "sha256": "5ee378caeef40abb90889ec0c2b21b3d01168def06e4a6d5edaea6ad13638e04",
+          "size": 1674
+        },
+        "thread": {
+          "sha256": "079d22d73441fbd06f9d0fabc467de2c99cb79733d84059074464e10a71c3d13",
+          "size": 491
+        },
+        "vise.adapter.json": {
+          "sha256": "a4a2a8507473a96c1d4e418ad871cafb6d00ee4b4556637a0096d852103fb64e",
+          "size": 2443
+        }
+      }
+    },
+    "repo_map": {
+      "path": "adapters/RepoMap",
+      "files": {
+        "README.md": {
+          "sha256": "439cf01d03e993d09716d0c525c44d1e74a9292779db415dced4e14a7cf90fd8",
+          "size": 505
+        },
+        "src/repo_map/__init__.py": {
+          "sha256": "cd48bae77aadaca769ec972d1e7e9dd8466ee55558f0265232232664c7eb0c9d",
+          "size": 55
+        },
+        "src/repo_map/main.py": {
+          "sha256": "8fc44dd317cd4a0d32c3b1143d08e80637d3a4cf765e3896bfcc1ecc0950f770",
+          "size": 5423
+        },
+        "src/repo_map/thread_cli.py": {
+          "sha256": "c4363432629906878d880afe0eefe04f24f0eb1c9a4d21495773d04ea01e7288",
+          "size": 1671
+        },
+        "thread": {
+          "sha256": "03e03dbc7e8591ca9b4e3e37879d7c54364c1492f6f43e9f55c787dd48599aaa",
+          "size": 479
+        },
+        "vise.adapter.json": {
+          "sha256": "447b7a82f28e6e04dfaaff6c1ec8a4e2919a1023e7f6b84552c9723b90ce8775",
+          "size": 2217
+        }
+      }
+    },
+    "task_list": {
+      "path": "adapters/TaskList",
+      "files": {
+        "README.md": {
+          "sha256": "19da23ea420d61599438f05ea90acfd99c0ef254c35fd5b35a56a7dafde67f05",
+          "size": 384
+        },
+        "src/task_list/__init__.py": {
+          "sha256": "d3faab7c6041eef5e89c4c94606406ff6e3a08de1073980fc54682494b7900bd",
+          "size": 50
+        },
+        "src/task_list/main.py": {
+          "sha256": "0468ba49ade2433acd9203cf198f6a0649b3f600f85523638f2bb705e46c8172",
+          "size": 5543
+        },
+        "src/task_list/thread_cli.py": {
+          "sha256": "7600c5e4632d05fd7dacbb81d76527bc3460007cc56661c6c8e51f6b49422622",
+          "size": 1672
+        },
+        "thread": {
+          "sha256": "f106c653e1786b02ddf39503c2b7bc26a9884f6053cdd721ebb364ab74e7154c",
+          "size": 483
+        },
+        "vise.adapter.json": {
+          "sha256": "b11d923f4edde4bb03f2331860e53db3b9b53a6dab02c633247cae4bbe891fbd",
+          "size": 1981
+        }
+      }
+    },
+    "github_toolkit": {
+      "path": "adapters/githubToolkit",
+      "files": {
+        "README.md": {
+          "sha256": "616ff2f04486e6e726e03c8a06269985be413944266bf6d61655d2723b20d359",
+          "size": 2229
+        },
+        "bin/congit": {
+          "sha256": "1dcfe2dabc7d1c22efaa5fd7f851523f03a645e683715404491465244c8c5c40",
+          "size": 9066
+        },
+        "src/github_toolkit/__init__.py": {
+          "sha256": "cd4683efead091a868746d2bf8a79efab9376a772ff4d5e8f37c65c9d83396d3",
+          "size": 92
+        },
+        "src/github_toolkit/main.py": {
+          "sha256": "3788759db7f0a1d5516b3c003576f6231ed7673dca1117a41b68c16c6f3d19fc",
+          "size": 1107
+        },
+        "thread": {
+          "sha256": "e759cfb7dc2cd7027cf29ba4e8d609db49795238f100c31f5b58438bc79144d5",
+          "size": 2200
+        },
+        "vise.adapter.json": {
+          "sha256": "57ebf096f747b837463248e7d49e377d9c28565f1ddb814d398e777984e5e24b",
+          "size": 1439
+        },
+        "vise_extensions.sh": {
+          "sha256": "2b662ae9bc70d7ba48826e0107b998c05d98cecd44ba32089ce90d474789fbd7",
+          "size": 399
+        }
+      }
+    }
+  }
+}

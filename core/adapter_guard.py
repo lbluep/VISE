@@ -274,12 +274,21 @@ def restore(adapter_id: str, gen: int | None = None,
         if base is None or not base_tree.is_dir():
             return {"adapter_id": adapter_id, "status": "no-baseline",
                     "reason": "run: bash init/setup.sh"}
+        # Provenance: the user must see *what* they are rolling back to, not
+        # just *that* they are rolling back (the manifest's hashes may have
+        # arrived via a release manifest rather than an install-time scan).
+        provenance = {k: base.get(k) for k in
+                      ("provider", "release", "vise_version",
+                       "established_at")}
+        if base.get("held_back"):
+            provenance["held_back"] = base["held_back"]
         base_ver = base.get("vise_version")
         if base_ver is not None \
                 and base_ver != vise_baseline.VISE_VERSION and not force:
             return {"adapter_id": adapter_id, "status": "version-mismatch",
                     "baseline_version": base_ver,
                     "current_version": vise_baseline.VISE_VERSION,
+                    "baseline_provenance": provenance,
                     "reason": f"baseline was captured under Vise v{base_ver} "
                               f"(current v{vise_baseline.VISE_VERSION}); "
                               "restoring it would roll this adapter back "
@@ -310,8 +319,11 @@ def restore(adapter_id: str, gen: int | None = None,
                               "really intended."}
 
     if dry_run:
-        return {"adapter_id": adapter_id, "status": "dry-run", "from": ts,
-                "files": len(vise_baseline.iter_files(origin))}
+        out = {"adapter_id": adapter_id, "status": "dry-run", "from": ts,
+               "files": len(vise_baseline.iter_files(origin))}
+        if to_baseline:
+            out["baseline_provenance"] = provenance
+        return out
 
     # Reinstate in place: overwrite what the origin has, then drop what the
     # origin lacks. Copying before deleting means an interrupted restore leaves
@@ -329,8 +341,11 @@ def restore(adapter_id: str, gen: int | None = None,
             path.unlink()
 
     # Snapshots stay open: they are the rollback point for whatever comes next.
-    return {"adapter_id": adapter_id, "status": "restored", "from": ts,
-            "files": len(vise_baseline.iter_files(src))}
+    out = {"adapter_id": adapter_id, "status": "restored", "from": ts,
+           "files": len(vise_baseline.iter_files(src))}
+    if to_baseline:
+        out["baseline_provenance"] = provenance
+    return out
 
 
 def _read_lines(path: Path) -> list[str] | None:
@@ -473,6 +488,17 @@ def cmd_restore(args: argparse.Namespace) -> int:
     elif status in ("restored", "dry-run"):
         prefix = "[dry-run] would restore" if status == "dry-run" \
             else "restored"
+        prov = r.get("baseline_provenance")
+        if prov:
+            # Printed ahead of the outcome: what a rollback rolls back *to*
+            # matters as much as that it happens.
+            print(f"  baseline provenance: provider={prov.get('provider')}, "
+                  f"release={prov.get('release') or 'unknown'}, captured "
+                  f"{prov.get('established_at')} under Vise "
+                  f"v{prov.get('vise_version')}")
+            if prov.get("held_back"):
+                print(f"  held back at the OLD release's bytes: "
+                      + ", ".join(prov["held_back"]))
         print(f"[RESTORE] {r['adapter_id']}: {prefix} from {r['from']} "
               f"({r['files']} files)")
     elif status == "version-mismatch":

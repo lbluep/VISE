@@ -15,6 +15,7 @@ visectl run <id> <cmd> [args]     # invoke an adapter capability
 visectl read <id> <topic>         # read adapter knowledge content
 visectl manifest list|verify      # what Vise added outside VISE_ROOT (+ integrity)
 visectl adapter status|diff|verify  # drifted from baseline? baseline tree intact?
+visectl adapter upgrade [--staged DIR]  # reconcile baselines with a release manifest
 visectl doctor                    # diagnose without executing anything
 ```
 
@@ -84,6 +85,9 @@ Copy the reference layout, fill the manifest, validate — in this order:
 5. Gate before calling it done: `viseinit <id>` exit `0` (init + healthcheck),
    `visectl describe <id>` shows the declared surface, and one real
    `visectl run <id> <cmd>` works end-to-end
+6. Refresh the release manifest: `.venv/bin/python core/release.py generate`
+   (any change under `adapters/` or a version bump needs it; CI/smoke runs
+   `core/release.py check`)
 
 Full manifest contract: [docs/DESIGN.md](docs/DESIGN.md) §3.3 (field list, the
 two `init_steps` forms, the `read` resource convention).

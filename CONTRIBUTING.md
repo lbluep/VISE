@@ -184,6 +184,9 @@ command, also executed by CI. At minimum:
 - `bash init/setup.sh` runs clean and is idempotent.
 - `viseinit --all` reports every enabled adapter `[OK]` and exits `0`.
 - `visectl doctor` reports all adapters OK.
+- For any change under `adapters/` (or a `core/version.py` bump), refresh the
+  release manifest: `.venv/bin/python core/release.py generate`, then confirm
+  `.venv/bin/python core/release.py check` exits `0`.
 - For any change touching files outside `VISE_ROOT`, run
   `bash init/uninstall.sh --dry-run` and confirm the ledger accounts for them.
 

@@ -5,14 +5,28 @@
 # 3. (Re)generate .vise/tool_paths.json (python -> .venv) + .vise/python
 # 4. (Re)generate .vise/registry.json + .vise/requirements.txt by scanning
 #    adapters/ (generated artifacts, not repo-managed)
+# 4.5 (--upgrade-from DIR only) reconcile adapters against the staged release
+#    tree BEFORE any of its bytes land here (C13: compare before overwrite),
+#    then overlay the rest of the tree and re-register
 # 5. Capture the adapter baseline (C13; only when absent - see core/baseline.py)
-#    + stamp .vise/version; on a version change, reconcile baselines
-#    (clean adapters re-stamp automatically, modified ones are reported)
+#    + stamp .vise/version; on a version change, reconcile baselines against
+#    the shipped release manifest (per file; review items are reported)
 # 6. Install adapter Python dependencies into .venv
 # 7. Update shell startup to auto-load Vise commands
 # 8. Run viseinit to initialize all Vise configurations
 # Every step is idempotent: re-running only refreshes machine-local state.
+#
+# Usage: bash init/setup.sh [--upgrade-from <staged release tree>]
 set -euo pipefail
+
+UPGRADE_FROM=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --upgrade-from)
+            UPGRADE_FROM="${2:?--upgrade-from needs a directory}"; shift 2 ;;
+        *) echo "ERROR: unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
 
 VISE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VAR_DIR="$VISE_ROOT/.vise"
@@ -99,6 +113,37 @@ echo
 echo "== Generating adapter registry + requirements =="
 "$VENV_PYTHON" "$VISE_ROOT/init/register_adapters.py"
 
+# --- 4.5 (--upgrade-from) staged reconcile + overlay -------------------------
+# C13 rule 1: compare before overwrite. The adapters/ tree is reconciled
+# against the staged release's vise.release.json BEFORE any of its bytes land
+# here, so per-file decisions are made against the untouched on-disk state.
+# Only then is the rest of the tree (core/, init/, docs/...) overlaid and the
+# registry re-generated from the NEW adapters/ tree.
+if [[ -n "$UPGRADE_FROM" ]]; then
+    SRC="$(cd "$UPGRADE_FROM" && pwd)"
+    [[ -f "$SRC/vise.release.json" ]] \
+        || { echo "ERROR: $SRC has no vise.release.json - not a staged release tree." >&2; exit 1; }
+    echo
+    echo "== Staged upgrade from $SRC: reconciling adapters (compare before overwrite) =="
+    set +e
+    "$VENV_PYTHON" "$VISE_ROOT/core/baseline.py" upgrade --staged "$SRC"
+    up_rc=$?
+    set -e
+    case "$up_rc" in
+        0) ;;
+        1) echo "WARNING: some adapters need review after the upgrade (see above)" >&2 ;;
+        *) echo "ERROR: staged reconciliation failed (exit $up_rc); setup aborted - nothing was overlaid." >&2
+           exit "$up_rc" ;;
+    esac
+    echo
+    echo "== Overlaying the release tree (excluding adapters/, state, venv) =="
+    tar -C "$SRC" \
+        --exclude='./.vise' --exclude='./.venv' --exclude='./.git' \
+        --exclude='./adapters' --exclude='./core/adapter_paths.json' \
+        -cf - . | tar -C "$VISE_ROOT" -xf -
+    "$VENV_PYTHON" "$VISE_ROOT/init/register_adapters.py"
+fi
+
 # --- 5. Capture adapter baselines (C13) -------------------------------------
 # The baseline is the pristine reference an adapter is compared against, and
 # what a zip/tarball install restores from when there is no repository.
@@ -119,7 +164,7 @@ CURRENT_VERSION="$("$VENV_PYTHON" "$VISE_ROOT/core/baseline.py" version)"
 STAMP_FILE="$VISE_ROOT/.vise/version"
 STAMPED=""
 [[ -f "$STAMP_FILE" ]] && STAMPED="$(cat "$STAMP_FILE")"
-if [[ -n "$STAMPED" && "$STAMPED" != "$CURRENT_VERSION" ]]; then
+if [[ -z "$UPGRADE_FROM" && -n "$STAMPED" && "$STAMPED" != "$CURRENT_VERSION" ]]; then
     echo
     echo "== Vise upgrade detected (v$STAMPED -> v$CURRENT_VERSION): reconciling baselines =="
     "$VENV_PYTHON" "$VISE_ROOT/core/baseline.py" upgrade \

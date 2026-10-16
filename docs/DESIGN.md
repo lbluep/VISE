@@ -49,6 +49,7 @@ The current implementation is split into 4 layers, from the bottom up:
 │  init/setup.sh · init/register_adapters.py       │
 │  init/uninstall.sh · init/pick_pip_index.py      │
 │  core/baseline.py (install-time baseline)        │
+│  core/release.py (vise.release.json gen/check)   │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -62,13 +63,14 @@ The current implementation is split into 4 layers, from the bottom up:
 
 | File | Responsibility |
 | --- | --- |
-| `init/setup.sh` | One-shot install (Git Bash / Linux): detect tools → create `.venv` → write `.vise/tool_paths.json` → generate `.vise/registry.json` → capture adapter baselines → install deps → idempotently update shell rc → automatically run `viseinit --all` |
+| `init/setup.sh` | One-shot install (Git Bash / Linux): detect tools → create `.venv` → write `.vise/tool_paths.json` → generate `.vise/registry.json` → capture adapter baselines → install deps → idempotently update shell rc → automatically run `viseinit --all`; with `--upgrade-from DIR` the baseline reconcile runs against the staged tree *before* any overlay, so edits are compared before being overwritten (C13) |
 | `init/register_adapters.py` | Scan `adapters/*/vise.adapter.json` → generate `.vise/registry.json` + `.vise/requirements.txt` (`adapter_id` uniqueness check, warn-and-skip invalid manifests) |
 | `init/pick_pip_index.py` | Probe official PyPI + public mirrors concurrently and print the fastest reachable index (used by `setup.sh` before `pip install`) |
 | `init/uninstall.sh` | One-shot uninstall: apply the uninstall ledger (remove/revert everything Vise added or modified outside `VISE_ROOT`), plus fallback wrapper scan and idempotent rc-marker cleanup; optionally clean up all generated artifacts |
 | `core/manifest.py` | Uninstall ledger writer: installers call `add` right after writing any file outside `VISE_ROOT` (upsert on kind+path, sha256 for created files, revert recipe for modified files); exposes `list`/`verify`/`uninstall-apply` |
-| `core/baseline.py` | Install-time reference state (C13): fingerprints each adapter into `.vise/baseline/<id>/` (per-file sha256 + a full tree copy) so drift can be detected and the original restored **without git**; captured by `setup.sh` **only when absent**, so re-running setup never blesses an edited tree as "original". `verify` re-checks the tree copy against its manifest so a tampered or half-written baseline is a loud failure, not a silent one. Providers are pluggable for future non-install sources |
-| `core/version.py` | Release stamp (`VERSION`). `setup.sh` records it in `.vise/version`; a mismatch on a later run means the install was upgraded in place, and `baseline.py upgrade` reconciles baselines: **clean** adapters re-stamp automatically, **modified** ones are reported for review (drift may mix vendor changes with user edits - never auto-accepted). Every manifest carries the `vise_version` it was captured under, so `restore --base` refuses (exit 7, `--force` overrides) to roll an adapter back across the upgrade |
+| `core/baseline.py` | Install-time reference state (C13): fingerprints each adapter into `.vise/baseline/<id>/` (per-file sha256 + a full tree copy) so drift can be detected and the original restored **without git**; captured by `setup.sh` **only when absent**, so re-running setup never blesses an edited tree as "original". `verify` re-checks the tree copy against its manifest so a tampered or half-written baseline is a loud failure, not a silent one. Providers: `install` (working-tree scan, copy-producing) and `release` (hash-only from `vise.release.json`, requires `--tree-from` and verifies every hash before accepting bytes) |
+| `core/version.py` | Release stamp (`VERSION`). `setup.sh` records it in `.vise/version`; a mismatch on a later run means the install was upgraded in place, and `baseline.py upgrade` reconciles baselines **per file** against `vise.release.json` (vendor changes applied, local drift kept, conflicts reported for review); when the manifest is absent or disagrees with the code version, the fallback is whole-adapter verdicts (clean re-stamp, modified review). Every manifest carries the `vise_version` it was captured under, so `restore --base` refuses (exit 7, `--force` overrides) to roll an adapter back across the upgrade |
+| `core/release.py` | Generates and checks `vise.release.json` — the committed per-file hash manifest the `release` provider reads; `generate` is atomic, `check` (CI/smoke) fails when the manifest no longer describes the tree it sits in |
 
 **Design intent:**
 - Install runs only once; afterwards, opening a new shell automatically provides the Vise commands
@@ -448,10 +450,10 @@ Design intent:
 | `.vise/installed.json` | `core/manifest.py` (via setup.sh / thread) | Uninstall ledger: files Vise created/modified outside `VISE_ROOT`, with sha256 (created) or revert recipe (modified) | No |
 | `.vise/reports/viseinit_report_*.json` | `viseinit` | Initialization report (timestamp + summary + details) | No |
 | `.vise/reports/latest.json` | `viseinit` | Soft copy of the latest report | No |
-| `.vise/baseline/<id>/` | `init/setup.sh` (via `core/baseline.py`) | Pristine per-adapter reference (manifest + tree copy), captured once so drift is detectable and the original restorable without git | No |
+| `.vise/baseline/<id>/` | `init/setup.sh` (via `core/baseline.py`) | Pristine per-adapter reference (manifest + tree copy), captured once so drift is detectable and the original restorable without git; `upgrade` rewrites it per file during a release reconcile | No |
 | `.vise/snapshots/<id>/` | `visectl adapter snapshot` | Rollback generations (bounded: newest 5 plus the newest open) | No |
 | `.vise/patches/<id>/` | `visectl adapter promote` | Reviewable unified diffs of accepted improvements (never auto-committed) | No |
-| `.vise/version` | `init/setup.sh` | Release stamp of the last setup run; a mismatch on the next run triggers baseline reconciliation (`baseline.py upgrade`) | No |
+| `.vise/version` | `init/setup.sh` | Release stamp of the last setup run; a mismatch on the next run triggers per-file baseline reconciliation (`baseline.py upgrade` against `vise.release.json`) | No |
 
 Cleanup methods: `visectl clean --reports` (reports >30 days old), `visectl clean --state` (orphan residue:
 `state/`, `baseline/`, `snapshots/`, `patches/` entries whose adapter is gone from the registry — reported by
@@ -523,32 +525,38 @@ changes as reviewable patches (never auto-committed). Full flow in §3.4;
 contributor rules in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The provider slot in `baseline.py` is an extension point, not a
-distribution-format feature: a release-manifest provider would read a
-known-good hash list kept as an ordinary file *inside* the release tree, so it
-rides along with any channel (zip, tarball, rsync, clone) rather than relying
-on one. That manifest shares its files' own delivery channel and therefore
-carries no independent authority — it is advisory input to `upgrade` only,
-never a licence for `restore --base` to act or for user edits to be dropped
-silently.
+distribution-format feature. The `release` provider reads
+`vise.release.json` — a known-good per-file hash list kept as an ordinary
+committed file *inside* the release tree — so it rides along with any channel
+(zip, tarball, rsync, clone) rather than relying on one. That manifest shares
+its files' own delivery channel and therefore carries no independent
+authority: it is advisory input to `upgrade` only, never a licence for
+`restore --base` to act or for user edits to be dropped silently. It is
+regenerated whenever `adapters/` or `core/version.py` changes
+(`core/release.py generate`); `core/release.py check` (run in smoke/CI)
+verifies it always describes the tree it sits in.
 
-Two ordering rules close the holes in that sketch, plus one provenance rule:
+Two ordering rules and one provenance rule shape the reconcile:
 
 - **Compare before overwrite.** An in-place extract destroys the user's edits
   to vendor-shipped files before any reconciler can see them, so the
-  three-way compare must run against the *pre-extraction* tree. The safe flow
-  stages the new release in a scratch directory, computes the per-file plan,
-  and only then applies it. A raw extract-over forfeits conflict detection
-  entirely; it is only acceptable behind a snapshot taken beforehand — the
-  edits stay recoverable through C13, but after the fact nothing can tell
-  them apart from vendor changes.
+  three-way compare runs against the *pre-extraction* tree: the new release
+  is staged in a scratch directory and `baseline.py upgrade --staged DIR`
+  computes the per-file plan before any byte lands. `init/setup.sh
+  --upgrade-from DIR` drives exactly that order — reconcile, then overlay the
+  rest of the tree, then re-register and stamp `.vise/version`. A raw
+  extract-over forfeits conflict detection entirely; the edits stay
+  recoverable through C13 snapshots, but after the fact nothing can tell them
+  apart from vendor changes.
 
 - **Presence is a first-class state, not just hash equality.** The per-file
-  classifier keys on (old manifest, new manifest, disk): a file dropped from
-  the new manifest is a *vendor deletion* — refresh removes it, unless the
-  user edited it, in which case REVIEW; a file new in the manifest and absent
-  on disk is a *vendor addition* — install it; a file on disk appearing in
-  neither manifest is a *user file* — keep, never touch. Without these cases
-  a vendor deletion is misread as a user edit and kept forever.
+  classifier (`baseline.py classify`) keys on (old baseline, new manifest,
+  disk): a file dropped from the new manifest is a *vendor deletion* — the
+  refresh removes it, unless the user edited it, in which case REVIEW; a file
+  new in the manifest and absent on disk is a *vendor addition* — install it;
+  a file on disk appearing in neither manifest is a *user file* — keep, never
+  touch. Without these cases a vendor deletion would be misread as a user
+  edit and kept forever.
 
 - **Advisory input becomes durable.** The moment the manifest's hashes are
   written into a new baseline they stop being a hint and start being the
@@ -559,38 +567,44 @@ Two ordering rules close the holes in that sketch, plus one provenance rule:
   that provenance before touching anything, so the user sees *what* they are
   rolling back to, not just *that* they are rolling back.
 
-Five precision rules follow:
+Five precision rules complete the design:
 
 - **The old reference must be vendor-sourced.** The three-way compare is only
-  meaningful when the "old" side is genuinely vendor bytes. A baseline
-  re-established by `rebaseline` — accepting a user-edited tree — no longer
-  qualifies, and the `provider` field cannot currently tell the two apart.
+  meaningful when the "old" side is genuinely vendor bytes. Every baseline
+  carries a `vendor_sourced` flag; a baseline re-established by `rebaseline`
+  — accepting a user-edited tree — records `false` and no longer qualifies.
   Adapters in that state degrade to whole-adapter REVIEW until a pristine
-  reference is re-fetched, because there is no trustworthy vendor side left
-  to diff against.
+  reference is re-established, because there is no trustworthy vendor side
+  left to diff against. (Manifests predating the field are treated as
+  vendor-sourced: install-time scans were vendor references by definition.)
 
-- **Decisions are per-file; the refresh is partial.** P0's clean/modified
-  verdict is per-adapter, but the reconciler classifies per file, so the new
-  baseline is assembled file by file: vendor bytes for vendor-owned files,
-  the user's disk bytes for user files. What "clean" means, what `upgrade`'s
-  exit codes report (refreshed / kept / review tallies), and what
-  `restore --base` restores all follow from that assembly and must be
-  redefined accordingly.
+- **Decisions are per-file; the refresh is partial.** The reconciler
+  classifies per file, so the new baseline is assembled file by file: release
+  bytes for vendor-owned files, the user's disk bytes where the vendor did
+  not move, the old entry *held back* where new bytes are unavailable
+  (non-staged reconcile of a file the extract did not carry). `upgrade`
+  exits `0` when fully reconciled, `1` while review items remain, `2` on
+  usage or input errors (bad staged tree, downgrade, unreadable manifest).
 
 - **"Matches neither" is unknown origin, not a verdict.** Across a skipped
   release (v0.1 → v0.5) a vendor file changed twice matches neither the old
-  baseline nor the new manifest. REVIEW is a hint that Vise cannot attribute
-  the change — the report must say so, not accuse the user of an edit.
+  baseline nor the new manifest. REVIEW means Vise cannot attribute the
+  change, and the report says exactly that — a local edit, a skipped release,
+  or an interrupted earlier upgrade — without accusing the user.
 
-- **The manifest carries the release it describes.** A release-version field
-  lets Vise confirm the manifest matches the tree being installed, detect
-  downgrades and same-version re-extracts, and reconcile against
-  `.vise/version` — rather than trusting whichever file happens to sit at the
-  fixed path.
+- **The manifest carries the release it describes.** The `release` field lets
+  `upgrade` confirm the manifest matches the tree being installed, detect
+  downgrades (refused, exit `2`) and same-version re-extracts (the classifier
+  naturally no-ops), and reconcile against `.vise/version`. A non-staged run
+  whose manifest disagrees with `core/version.py` falls back to whole-adapter
+  verdicts with a warning, because its hash decisions would rest on a stale
+  manifest.
 
-- **The provider contract needs a verify shape.** `PROVIDERS` currently
-  returns `{"source_dir", "files"}` and `establish` always copies
-  `source_dir` into `tree/`. A manifest provider has hashes; bytes only exist
-  when a new tree was staged. The contract must distinguish copy-producing
-  providers (install scan, staged tree) from hash-only verification, or
-  `establish` will label whatever happens to be on disk as "original".
+- **The provider contract has a verify shape.** `PROVIDERS` return
+  `{"files", "tree", "release"}`; a provider with `tree=None` is hash-only
+  and cannot originate bytes, so `establish` then requires an explicit
+  `tree_from` directory and verifies every fingerprinted file's sha256 before
+  accepting any byte — a staged tree that disagrees with its own manifest is
+  corruption, not a baseline, and is refused (exit `2`). Only fingerprinted
+  files are copied, so a staged tree cannot smuggle unlisted content into a
+  baseline.

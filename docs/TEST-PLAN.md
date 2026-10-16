@@ -19,7 +19,7 @@ Legend: **T#** = test point id. "expect 0" means the process exit code is `0`.
 
 ## T0 — Universal smoke (every PR)
 
-**Automated:** `bash tests/smoke.sh` runs T0 + T1 (plus the core of T10, step 7)
+**Automated:** `bash tests/smoke.sh` runs T0 + T1 (plus the core of T10, step 7, and T11, step 8)
 in one command — the same script CI executes. The individual commands below are
 what it asserts.
 
@@ -204,7 +204,7 @@ from a checkout.
 | T10.20 | `visectl adapter status --json` while an adapter is drifted | exit `1`, identical to the human-output run — the exit code reflects the outcome, never the requested format |
 | T10.21 | `visectl adapter snapshot <id> -m ""` (blank reason) | rejected, exit `2` — a blank reason carried no audit trail |
 | T10.22 | tamper a file inside `.vise/baseline/<id>/tree/` | `visectl adapter verify <id>` reports the file, exit `1`; `doctor` fails with a rebuild hint; `establish <id> --refresh` restores integrity (verify exit `0`). Unbaselined adapters are `[SKIP]`, not corruption |
-| T10.23 | bump `core/version.py`, touch one adapter's source (vendor change), re-run `setup.sh` | upgrade detected (`vX -> vY`); clean adapters `[REFRESH]` re-stamped, the touched one `[REVIEW]` with drift summary and guidance; `.vise/version` updated; setup still exits `0` |
+| T10.23 | bump `core/version.py` **without regenerating** `vise.release.json`, touch one adapter's source (vendor change), re-run `setup.sh` | upgrade detected (`vX -> vY`); the stale manifest triggers whole-adapter fallback with a warning — clean adapters `[REFRESH]` re-stamped, the touched one `[REVIEW]` with drift summary and guidance; `.vise/version` updated; setup still exits `0`. (With a regenerated manifest the same scenario reconciles per file instead — see T11.11–T11.13.) |
 | T10.24 | after T10.23, `visectl adapter restore <id> --base` on the not-yet-rebaselined adapter | `[REFUSE]`, exit `7` — the baseline still holds the old release's bytes; `--force` restores them; a refreshed adapter's `restore --base` works normally. Baselines without `vise_version` (pre-stamp installs) restore without refusal |
 | T10.25 | snapshot taken under vX, then bump version and re-run setup | `adapter list` flags the snapshot `!=cur`; `restore` (no `--base`) of that generation is refused, exit `7`; `--force` restores it |
 | T10.26 | manually create `.vise/{baseline,snapshots,patches,state}/ghost_tool/`, remove `ghost_tool` from `adapters/` so it is absent from registry | `visectl doctor` prints "Orphan state" with `ghost_tool` (exit `0` — not a failure); `clean --state --dry-run` lists all four prefixed (`baseline/ghost_tool`, `snapshots/ghost_tool`, `patches/ghost_tool`, `state/ghost_tool`); actual `clean --state` removes them; subsequent `doctor` no longer reports orphan |
@@ -214,3 +214,43 @@ from a checkout.
 *action impossible* (no such generation / nothing to promote) and `2` for
 usage/input errors. These are distinct from the `viseinit` `0`–`6` map and
 from the ledger's `1`/`3`.
+
+---
+
+## T11 — Release manifest and staged upgrade (change surface: `core/release.py`, `core/baseline.py`, `init/setup.sh`, `vise.release.json`, `visectl adapter upgrade`)
+
+Run this group in both a normal clone and a sandbox built with `git archive`:
+
+```bash
+mkdir /tmp/vise-nogit && git archive --format=tar HEAD | tar -x -C /tmp/vise-nogit
+cd /tmp/vise-nogit && bash init/setup.sh
+```
+
+**Automated:** `bash tests/smoke.sh` step 8 exercises the manifest check,
+staged per-file reconcile, downgrade refusal, staged-tree tamper detection,
+hash-only establish verification, provenance, and legacy fallback (T11.1,
+T11.2, T11.4, T11.6, T11.10–T11.15, T11.19–T11.21).
+
+| ID | Command | Expected |
+| --- | --- | --- |
+| T11.1 | `.venv/bin/python core/release.py check` | exit `0` — the committed manifest describes the tree it sits in |
+| T11.2 | `core/release.py check` after editing a file under `adapters/` | mismatch reported (changed path listed with `M`); exit `1` |
+| T11.3 | `core/release.py check` after bumping `core/version.py` without regenerating | `release_mismatch` reported: manifest vs tree disagree; exit `1` |
+| T11.4 | `core/release.py generate` after adapter changes | atomic write (no partially-written file); a subsequent `check` passes |
+| T11.5 | `.gitignore` check for `vise.release.json` | **tracked** in git (it is an ordinary committed file) |
+| T11.6 | `setup.sh --upgrade-from /tmp/staged-tree` with a clean tree | staged reconciliation exit `0`; overlay applied; `.vise/version` stamped with the NEW version |
+| T11.7 | `setup.sh --upgrade-from /tmp/staged-tree` with a conflicting edit | staged reconciliation exit `1`; conflict path stays in place; review guidance printed; overlay still applied (setup continues) |
+| T11.8 | `setup.sh --upgrade-from` pointing at a directory with no `vise.release.json` | setup aborts, exit `1` |
+| T11.9 | `baseline.py upgrade --staged /tmp/new` where the staged `vise.release.json` describes a version lower than the install stamp | **refused**, exit `2` (downgrade) |
+| T11.10 | `baseline.py upgrade --staged /tmp/new` where a staged file disagrees with its own manifest (e.g. manifest generated, then file edited without re-gen) | **refused**, exit `2` — staged tree is treated as corrupt input, not a baseline source |
+| T11.11 | `baseline.py upgrade` (non-staged) after a file change but `vise.release.json` already matches the current code version | per-file matrix runs: unchanged clean adapters `[KEEP]` or `[REFRESH]` (stamp-only), changed files `[REVIEW]`; exit `1` if any review |
+| T11.12 | `baseline.py upgrade --staged` dry-run then real | dry-run prints the same review list and exit `1` but **touches nothing** (disk, baselines, and the staged tree all unchanged) |
+| T11.13 | `baseline.py upgrade --staged` with: vendor-update file, vendor-added file, vendor-deleted file, untouched-by-vendor drift, three-way-conflict, user-only file | update applied, addition installed, deletion removed, drift kept, conflict left in place with review reason, user file untouched |
+| T11.14 | after T11.13, `baseline.py verify` on the conflict adapter | the baseline tree matches its manifest (the manifest records the new release's bytes for the conflict path; the on-disk drift is NOT in the baseline) |
+| T11.15 | `baseline.py establish <id> --provider release --refresh --tree-from <dir>` where `<dir>` bytes mismatch the manifest | **refused**, exit `2`; the existing baseline is untouched |
+| T11.16 | after a staged upgrade, `baseline.py adapter status` | adapters that had review paths show `modified` (disk drift vs baseline); cleanly refreshed adapters show `clean`; `release` and `vendor_sourced` appear in `--json` manifest row |
+| T11.17 | `baseline.py upgrade --staged` when an adapter's baseline is `vendor_sourced: false` | the adapter is reported as a whole-adapter `[REVIEW]` with reason about non-vendor-sourced baseline; per-file classify is skipped for that adapter |
+| T11.18 | `baseline.py upgrade --staged` for an adapter absent from the new manifest | `[REVIEW]` with reason "not covered by the release manifest"; files left in place; orphan machinery handles residue after manual removal |
+| T11.19 | `upgrade --staged` where the vendor drops a file the user already deleted | no crash; counted as deleted; path absent from the new baseline (there are no bytes to record) |
+| T11.20 | non-staged `upgrade` on the current release with local drift on vendor-unchanged files | every rewritten baseline passes `verify` — the baseline tree holds vendor bytes (from the old baseline tree), never the drift; `restore --base` cannot hand back user bytes |
+| T11.21 | non-staged `upgrade` where a vendor file is missing on disk but unchanged since the baseline | restored from the baseline tree (no staged bytes needed); a missing file the vendor *did* change becomes review — neither disk nor baseline can supply the new bytes |

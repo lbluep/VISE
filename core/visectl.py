@@ -26,6 +26,7 @@ Usage:
   visectl adapter restore <id> [--base]   # roll back to the snapshot/baseline
   visectl adapter promote <id> -m "why"   # sediment the change as a patch
   visectl adapter rebaseline <id>         # accept the tree as the reference
+  visectl adapter upgrade [--staged DIR]  # reconcile baselines with a release
 
 All commands support --json for machine-readable output to stdout.
 """
@@ -416,7 +417,7 @@ def cmd_adapter(args: argparse.Namespace) -> int:
         print(f"visectl: {verb}: --message must not be blank - "
               "record WHY the adapter changes", file=sys.stderr)
         return 2
-    if verb in ("status", "diff", "verify"):
+    if verb in ("status", "diff", "verify", "upgrade"):
         return getattr(_baseline(), f"cmd_{verb}")(args)
     return getattr(_guard(), f"cmd_{verb}")(args)
 
@@ -639,6 +640,14 @@ def main() -> int:
     a_rb.add_argument("--all", action="store_true")
     a_rb.add_argument("--force", action="store_true")
     a_rb.add_argument("--json", action="store_true")
+
+    a_up = a_sub.add_parser(
+        "upgrade",
+        help="reconcile baselines against the release manifest (per file)")
+    a_up.add_argument("--staged", default=None, metavar="DIR",
+                      help="staged release tree (compare before overwrite)")
+    a_up.add_argument("--dry-run", action="store_true")
+    a_up.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
 
