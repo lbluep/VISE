@@ -5,9 +5,7 @@ name: ci
 # subset of docs/TEST-PLAN.md (T0/T1). Enable "Require status checks to pass"
 # for the `main` branch so this gates merges.
 #
-# Scope: ubuntu only for now. Vise also targets Git Bash on Windows; a
-# windows-latest matrix is intentionally deferred until the ubuntu job is
-# stable (see CONTRIBUTING.md).
+# Scope: ubuntu + windows (Git Bash). macOS is planned but not yet verified.
 
 on:
   push:
@@ -20,7 +18,11 @@ concurrency:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +33,15 @@ jobs:
       # adapters declare in `required_cots` (fast_search needs ripgrep >= 13),
       # otherwise `viseinit --all` exits 2 on a missing dependency.
       - name: Install external tools required by adapters
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get install -y ripgrep
           rg --version
+      - name: Install external tools required by adapters (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ripgrep -y; rg --version
+      # On windows-latest the default shell for `run:` with bash is Git Bash,
+      # which is the documented Windows surface (README "Requirements").
       - name: Smoke test
         run: bash tests/smoke.sh

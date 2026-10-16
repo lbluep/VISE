@@ -27,6 +27,27 @@ ADAPTERS_DIR = VISE_ROOT / "adapters"
 REGISTRY_PATH = VISE_ROOT / ".vise" / "registry.json"
 REQUIREMENTS_PATH = VISE_ROOT / ".vise" / "requirements.txt"
 
+# B2: the resource categories the library is being built around (README
+# "Vise Design" table). A manifest outside this set is a manifest error:
+# discovery (`visectl list --category`) only works when categories match.
+CATEGORIES = {
+    "tools", "work_instruction", "database", "ai_chat",
+    "plan", "todo", "onedrive", "external",
+}
+
+
+def validate_manifest(manifest: dict, rel_dir: str) -> str | None:
+    """Return a warning string when the manifest violates the contract."""
+    commands = manifest.get("commands")
+    if not isinstance(commands, list) or not commands:
+        return (f"skip {rel_dir}: manifest has no commands "
+                "(the declared surface is the adapter contract)")
+    category = (manifest.get("provides") or {}).get("category")
+    if category is not None and category not in CATEGORIES:
+        return (f"skip {rel_dir}: unknown provides.category '{category}' "
+                f"(expected one of: {', '.join(sorted(CATEGORIES))})")
+    return None
+
 
 def scan_adapters() -> tuple[list[dict], list[str]]:
     """Scan adapters/*/vise.adapter.json. Returns (adapters, warnings)."""
@@ -45,6 +66,10 @@ def scan_adapters() -> tuple[list[dict], list[str]]:
         adapter_id = manifest.get("adapter_id")
         if not adapter_id:
             warnings.append(f"skip {rel_dir}: manifest has no adapter_id")
+            continue
+        violation = validate_manifest(manifest, rel_dir)
+        if violation:
+            warnings.append(violation)
             continue
         adapters.append({
             "adapter_id": adapter_id,

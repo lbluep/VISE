@@ -157,11 +157,15 @@ resolve("python")
 | `git` | `git` |
 | `7zip` | `7z`, `7zz` |
 | `vscode` | `code` |
+| `ripgrep` | `rg`, `ripgrep` |
 
 **Version check** (`resolve_with_version`):
 
 A `required_cots` entry may specify `min_version`; the resolver runs the tool's
-`--version` command, parses the version number, and compares whether it meets the requirement.
+`--version` command (`7z` prints a banner on bare invocation), parses the
+version number, and compares whether it meets the requirement. Supported for
+`python`, `git`, `vscode`, `ripgrep` (alias `rg`) and `7zip` (`7z`/`7zz`);
+tools without a probe pass the check on path presence alone.
 
 ### 3.3 Layer 3 — Adapter Layer
 
@@ -214,7 +218,7 @@ adapters/<AdapterName>/
     "thread_cli": "src/example_tool/thread_cli.py",
     "extensions": "vise_extensions.sh"
   },
-  "commands": [                     // optional: declared CLI surface (AI-agent friendly)
+  "commands": [                     // required: declared CLI surface (AI-agent friendly)
     {
       "name": "decode",
       "description": "Decode an encoded string",
@@ -235,7 +239,23 @@ adapters/<AdapterName>/
 **`commands` declaration:** lets an AI agent construct valid `visectl run <id>`
 calls without trial-and-error (`--help` probing), surfaced via
 `visectl describe <id>` (both human and `--json` output). Declarative metadata
-only — the CLI itself remains the source of truth for parsing.
+only — the CLI itself remains the source of truth for parsing. **Enforced:**
+`register_adapters` skips a manifest without a non-empty `commands` list
+(surfaced as a WARNING, adapter unregistered).
+
+**`provides.category` is closed-vocabulary:** `tools | work_instruction |
+database | ai_chat | plan | todo | onedrive | external` (the README "Vise
+Design" table). An unknown value is a manifest error — discovery
+(`visectl list --category`) only works when categories match.
+
+**Scaffolding:** `visectl adapter scaffold <Name> [--id ID] [--category C]
+[--description "..."]` copies `ExampleAdapter_reference/` to
+`adapters/<Name>/`, renames the identity references (directory, package,
+adapter_id, display name), stamps `version 0.1.0`, validates the contract
+rules above, and re-registers the library (exit 0 scaffolded, 2 usage error,
+1 internal failure). It keeps the example command skeleton — edit `commands`,
+`src/<id>/main.py` and the healthcheck, then run `viseinit <id>` and one real
+`visectl run <id> <cmd>`.
 
 **Resource read convention:** knowledge-type adapters (e.g. category
 `database`, `work instruction`) expose content through a `read` interface:

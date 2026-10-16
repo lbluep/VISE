@@ -254,3 +254,28 @@ T11.2, T11.4, T11.6, T11.10–T11.15, T11.19–T11.21).
 | T11.19 | `upgrade --staged` where the vendor drops a file the user already deleted | no crash; counted as deleted; path absent from the new baseline (there are no bytes to record) |
 | T11.20 | non-staged `upgrade` on the current release with local drift on vendor-unchanged files | every rewritten baseline passes `verify` — the baseline tree holds vendor bytes (from the old baseline tree), never the drift; `restore --base` cannot hand back user bytes |
 | T11.21 | non-staged `upgrade` where a vendor file is missing on disk but unchanged since the baseline | restored from the baseline tree (no staged bytes needed); a missing file the vendor *did* change becomes review — neither disk nor baseline can supply the new bytes |
+
+---
+
+## T12 — Scaffolding & manifest contract enforcement (change surface: `core/scaffold.py`, `init/register_adapters.py`, `core/vise_adapter_paths.py`)
+
+**Automated:** covered by the manual steps below in a sandbox (`rm -rf` the
+scaffolded adapter afterwards); smoke step 8 re-runs `release.py check`, which
+fails if a scaffolded adapter was left unlisted in the release manifest.
+
+| ID | Command | Expected |
+| --- | --- | --- |
+| T12.1 | `visectl adapter scaffold DemoScratch --description "t"` in a sandbox | exit `0`; `adapters/DemoScratch/` created; `demo_scratch` appears in `visectl list`; re-registration output shows the new count |
+| T12.2 | after T12.1, grep the new adapter dir for `example_tool` / `ExampleAdapter` | no stale references in `*.py`, `*.json`, `thread`, `*.sh`, `*.md` |
+| T12.3 | after T12.1, `viseinit demo_scratch; echo $?` | `0` — thread bootstrap + healthcheck pass on the untouched scaffold |
+| T12.4 | after T12.3, `visectl run demo_scratch decode SGVsbG8=` | `Hello` (exit `0`) — the declared surface actually works |
+| T12.5 | `visectl adapter scaffold DemoScratch` (already exists) | exit `2`, usage error |
+| T12.6 | `visectl adapter scaffold MyTool --id <existing_id>` | exit `2`, duplicate adapter_id refused |
+| T12.7 | `visectl adapter scaffold mytool` (not PascalCase) | exit `2` |
+| T12.8 | `visectl adapter scaffold MyTool --category wiki` | exit `2`, unknown category listed |
+| T12.9 | drop a manifest with `"provides": {"category": "wiki"}` into `adapters/`; `register_adapters.py` | WARNING `unknown provides.category`; adapter not registered; `viseinit --all` still exits `0` |
+| T12.10 | drop a manifest with no `commands` key; `register_adapters.py` | WARNING `manifest has no commands`; adapter not registered |
+| T12.11 | `resolve_with_version("ripgrep", "13.0")` on a host with `rg` | `ok: true`, real version parsed |
+| T12.12 | `resolve_with_version("ripgrep", "99.0")` | `ok: false` — version shortfall detected |
+| T12.13 | `resolve_with_version("7zip", "1.0")` | `ok: true` via the bare-invocation banner (`7z`/`7zz`) |
+| T12.14 | CI (`.github/workflows/ci.yml`) on the windows job | smoke passes under Git Bash on `windows-latest` |

@@ -26,6 +26,7 @@ Usage:
   visectl adapter restore <id> [--base]   # roll back to the snapshot/baseline
   visectl adapter promote <id> -m "why"   # sediment the change as a patch
   visectl adapter rebaseline <id>         # accept the tree as the reference
+  visectl adapter scaffold <Name>         # new adapter from the reference template
   visectl adapter upgrade [--staged DIR]  # reconcile baselines with a release
 
 All commands support --json for machine-readable output to stdout.
@@ -419,6 +420,9 @@ def cmd_adapter(args: argparse.Namespace) -> int:
         return 2
     if verb in ("status", "diff", "verify", "upgrade"):
         return getattr(_baseline(), f"cmd_{verb}")(args)
+    if verb == "scaffold":
+        import scaffold as vise_scaffold
+        return vise_scaffold.cmd_scaffold(args)
     return getattr(_guard(), f"cmd_{verb}")(args)
 
 
@@ -648,6 +652,17 @@ def main() -> int:
                       help="staged release tree (compare before overwrite)")
     a_up.add_argument("--dry-run", action="store_true")
     a_up.add_argument("--json", action="store_true")
+
+    a_sc = a_sub.add_parser(
+        "scaffold",
+        help="create a new adapter from the reference template")
+    a_sc.add_argument("name", help="adapter directory name (PascalCase)")
+    a_sc.add_argument("--id", default=None,
+                      help="adapter_id (default: snake_case of NAME)")
+    a_sc.add_argument("--category", default="tools",
+                      help="provides.category (default: tools)")
+    a_sc.add_argument("--description", default=None)
+    a_sc.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
 

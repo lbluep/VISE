@@ -83,6 +83,10 @@ Build up the resource library that can truly help the work:
 | --- | --- | --- | --- |
 | **Plan** | **ToDo List & Reminder** | **Cloud Drive Resource** | **External Resource Index** |
 
+Today the library implements two of the eight — **Tools** (search, edit, JSON,
+GitHub, repo-map, HTTP) and **Database** (NoteKeeper, TaskList); the other six
+are planned.
+
 The adapter layer is the machinery behind the library: each entry (a tool, a
 database manager, a WI manager, ...) is onboarded once as an adapter and is
 then initialized, checked and reported uniformly.

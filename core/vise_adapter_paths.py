@@ -21,6 +21,7 @@ _ALIASES = {
     "git": ["git"],
     "7zip": ["7z", "7zz"],
     "vscode": ["code"],
+    "ripgrep": ["rg", "ripgrep"],
 }
 
 
@@ -69,7 +70,15 @@ _VERSION_CMDS = {
     "python": ["--version"],
     "git": ["--version"],
     "vscode": ["--version"],
+    "ripgrep": ["--version"],
+    "7zip": [],
 }
+
+
+def _extract_version(output: str) -> str | None:
+    """Extract version string from tool --version output."""
+    m = re.search(r"(\d+\.\d+(?:\.\d+)?)", output)
+    return m.group(1) if m else None
 
 
 def _parse_version(s: str) -> tuple[int, ...]:
@@ -83,10 +92,23 @@ def _parse_version(s: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def _extract_version(output: str) -> str | None:
-    """Extract version string from tool --version output."""
-    m = re.search(r"(\d+\.\d+(?:\.\d+)?)", output)
-    return m.group(1) if m else None
+def _version_probe(tool: str, path: str) -> str | None:
+    """Run the tool's version command and extract the version string.
+
+    Most tools print it on `--version`; `7z` prints a banner on bare
+    invocation (exit code 0); `code` needs no version today.
+    """
+    args = _VERSION_CMDS.get(tool)
+    if args is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [path] + args,
+            capture_output=True, text=True, timeout=10,
+        )
+        return _extract_version(proc.stdout + proc.stderr)
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def resolve_with_version(tool: str, min_version: str | None = None) -> dict:
@@ -102,19 +124,10 @@ def resolve_with_version(tool: str, min_version: str | None = None) -> dict:
     if min_version is None:
         return {"path": path, "version": None, "ok": True}
 
-    version_cmd = _VERSION_CMDS.get(tool)
-    if version_cmd is None:
+    version_str = _version_probe(tool, path)
+    if version_str is None and _VERSION_CMDS.get(tool) is None:
         # No version checking available for this tool, pass
         return {"path": path, "version": None, "ok": True}
-
-    try:
-        proc = subprocess.run(
-            [path] + version_cmd,
-            capture_output=True, text=True, timeout=10,
-        )
-        version_str = _extract_version(proc.stdout + proc.stderr)
-    except (OSError, subprocess.SubprocessError):
-        version_str = None
 
     if version_str is None:
         return {"path": path, "version": None, "ok": False,

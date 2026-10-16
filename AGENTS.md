@@ -72,14 +72,17 @@ visectl adapter promote <id> -m "what changed"      # 4b. worked -> write a patc
 
 ## Onboarding a new adapter (when nothing in the library fits)
 
-Copy the reference layout, fill the manifest, validate — in this order:
+Fast path: `visectl adapter scaffold <Name> [--category C]` copies the
+reference template, renames the identity references and re-registers. Manual
+equivalent, in this order:
 
 1. Copy `adapters/ExampleAdapter_reference/` → `adapters/<NewName>/` (it is
    the template for the full contract: manifest + `thread` + `src/` layout)
 2. Edit `vise.adapter.json`: unique `adapter_id`; `required_cots` with
    `min_version` where needed; `entry_points.cli`; **declare `commands`**
-   (agents construct calls from these, no `--help` probing); `provides`
-   category/tags so `visectl list --json` can match it
+   (required — registration skips a manifest without it); `provides.category`
+   from the closed set (`tools | work_instruction | database | ai_chat | plan
+   | todo | onedrive | external`) so `visectl list --json` can match it
 3. Implement the CLI (argv in, exit code out) and the `thread` bootstrap
 4. Re-register: `bash init/setup.sh` (idempotent) or `viseinit --all`
 5. Gate before calling it done: `viseinit <id>` exit `0` (init + healthcheck),
