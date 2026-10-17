@@ -16,10 +16,24 @@ visectl read <id> <topic>         # read adapter knowledge content
 visectl manifest list|verify      # what Vise added outside VISE_ROOT (+ integrity)
 visectl adapter status|diff|verify  # drifted from baseline? baseline tree intact?
 visectl adapter upgrade [--staged DIR]  # reconcile baselines with a release manifest
+visectl audit [--adapter <id>] [--event <e>]  # execution audit (run + state changes)
+visectl search <query>               # find an adapter by keyword (identity, commands, README)
+visectl skill export <id> --out DIR  # package an adapter as a SKILL.md bundle
+visectl skill import <dir>           # turn a SKILL.md package into a managed adapter
+visectl bundle export --out FILE     # export a portable, hash-verified tree
+visectl bundle import FILE           # verify + reconcile (fresh/merge per adapter)
 visectl doctor                    # diagnose without executing anything
 ```
 
 All commands support `--json`. Stable exit codes are designed for agents.
+State-changing commands serialize through one Linux write lock (`.vise/.lock`,
+`fcntl`): contention past `VISE_LOCK_TIMEOUT` (default 10 s) exits **75** — a
+transient failure to retry, never an adapter failure. Every `run` and every
+state-changing visectl command appends one audit record (event/adapter/
+capability only — never argument values). An MCP host reaches the
+agent-facing surface (list/describe/doctor/read/run/status/search/
+snapshot/restore) through `core/vise_mcp.py`; restore requires an explicit
+`confirm: true`.
 
 **Physical entry (non-interactive shells):** `visectl` / `viseinit` are shell
 functions loaded only by an interactive rc. In agent tool calls, scripts and
@@ -73,8 +87,9 @@ visectl adapter promote <id> -m "what changed"      # 4b. worked -> write a patc
 ## Onboarding a new adapter (when nothing in the library fits)
 
 Fast path: `visectl adapter scaffold <Name> [--category C]` copies the
-reference template, renames the identity references and re-registers. Manual
-equivalent, in this order:
+reference template, renames the identity references, re-registers **and
+refreshes `vise.release.json` automatically** (one locked operation; failure
+to refresh is exit 1). Manual equivalent, in this order:
 
 1. Copy `adapters/ExampleAdapter_reference/` → `adapters/<NewName>/` (it is
    the template for the full contract: manifest + `thread` + `src/` layout)

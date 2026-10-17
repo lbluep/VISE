@@ -840,6 +840,18 @@ def upgrade(staged: Path | None = None, dry_run: bool = False) -> list[dict]:
 # --- CLI ---------------------------------------------------------------------
 
 def cmd_establish(args: argparse.Namespace) -> int:
+    import vise_lock
+    try:
+        with vise_lock.write_lock(
+                "baseline establish " + ("--all" if args.all
+                                         else args.adapter_id or "")):
+            return _cmd_establish(args)
+    except vise_lock.LockTimeout as exc:
+        print(f"baseline: {exc}", file=sys.stderr)
+        return vise_lock.LOCK_EXIT_CODE
+
+
+def _cmd_establish(args: argparse.Namespace) -> int:
     ids = ([a["adapter_id"] for a in registry_adapters()]
            if args.all else [args.adapter_id])
     if not ids or ids == [None]:
@@ -984,6 +996,19 @@ def cmd_version(_args: argparse.Namespace) -> int:
 
 def cmd_upgrade(args: argparse.Namespace) -> int:
     """`upgrade [--staged DIR] [--dry-run]` - 0 reconciled, 1 review, 2 usage."""
+    # Dry-run is a pure read and never takes the lock.
+    if args.dry_run:
+        return _cmd_upgrade(args)
+    import vise_lock
+    try:
+        with vise_lock.write_lock("baseline upgrade"):
+            return _cmd_upgrade(args)
+    except vise_lock.LockTimeout as exc:
+        print(f"baseline: {exc}", file=sys.stderr)
+        return vise_lock.LOCK_EXIT_CODE
+
+
+def _cmd_upgrade(args: argparse.Namespace) -> int:
     try:
         rows = upgrade(staged=args.staged, dry_run=args.dry_run)
     except ValueError as exc:

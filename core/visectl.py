@@ -28,6 +28,13 @@ Usage:
   visectl adapter rebaseline <id>         # accept the tree as the reference
   visectl adapter scaffold <Name>         # new adapter from the reference template
   visectl adapter upgrade [--staged DIR]  # reconcile baselines with a release
+  visectl audit [--adapter ID] [--event E] # query the execution audit log
+
+State-changing commands serialize through a single Linux write lock
+(.vise/.lock; VISE_LOCK_TIMEOUT bounds the wait; 75 = lock timeout). Every
+invocation that changes state (and every `run`, including guard refusals)
+appends one record to .vise/audit/audit.jsonl - events/adapter/capability
+only, never argument values.
 
 All commands support --json for machine-readable output to stdout.
 """
@@ -43,6 +50,7 @@ import time
 from pathlib import Path
 
 import vise_adapter_paths as lap
+import vise_lock
 
 VISE_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = VISE_ROOT / ".vise" / "registry.json"
@@ -53,6 +61,28 @@ REPORT_TTL_DAYS = 30  # P2-3: reports older than this are cleaned
 # Guard domain exit code (C13): a modified adapter with no open snapshot is
 # refused by `run` and `promote`. Kept out of the viseinit 0-6 map.
 EXIT_UNPROTECTED = 7
+
+
+def _audited(event: str, fn, *, adapter: str | None = None,
+             detail: str | None = None) -> int:
+    """Run a dispatch function and append one best-effort audit record.
+
+    Auditing is observational: it must never alter the command's behavior
+    or exit code. Only the event, adapter id and capability name (detail)
+    are recorded - never argument values.
+    """
+    started = time.monotonic()
+    rc = fn()
+    try:
+        import audit as vise_audit
+        vise_audit.record(
+            event, adapter=adapter, detail=detail, rc=rc,
+            duration_ms=int((time.monotonic() - started) * 1000))
+    except Exception:  # pragma: no cover - audit must never break a command
+        if os.environ.get("VISE_DEBUG"):
+            import traceback
+            traceback.print_exc()
+    return rc
 
 
 def load_json(path: Path) -> dict:
@@ -225,6 +255,12 @@ def cmd_thread(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    detail = args.cli_args[0] if getattr(args, "cli_args", None) else None
+    return _audited("run", lambda: _cmd_run(args),
+                    adapter=args.adapter_id, detail=detail)
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
     manifest = get_manifest(args.adapter_id)
     if manifest is None:
         print(f"visectl: adapter '{args.adapter_id}' not found or has no manifest",
@@ -418,11 +454,30 @@ def cmd_adapter(args: argparse.Namespace) -> int:
         print(f"visectl: {verb}: --message must not be blank - "
               "record WHY the adapter changes", file=sys.stderr)
         return 2
-    if verb in ("status", "diff", "verify", "upgrade"):
+    if verb in ("status", "diff", "verify"):
         return getattr(_baseline(), f"cmd_{verb}")(args)
+    if verb == "upgrade":
+        # Takes the write lock itself (also from the standalone CLI / setup.sh).
+        return _audited("upgrade",
+                        lambda: getattr(_baseline(), "cmd_upgrade")(args))
     if verb == "scaffold":
+        # Scaffold wraps its whole copy + register + release refresh in the lock.
         import scaffold as vise_scaffold
-        return vise_scaffold.cmd_scaffold(args)
+        return _audited("scaffold",
+                        lambda: vise_scaffold.cmd_scaffold(args),
+                        detail=getattr(args, "name", None))
+    # Guard mutating verbs all rewrite .vise state and share the single-writer
+    # lock; check/list are read-only and stay lock-free and un-audited.
+    if verb in ("snapshot", "restore", "promote", "rebaseline"):
+        def _guarded():
+            try:
+                with vise_lock.write_lock(f"adapter {verb} {args.adapter_id}"):
+                    return getattr(_guard(), f"cmd_{verb}")(args)
+            except vise_lock.LockTimeout as exc:
+                print(f"visectl: {exc}", file=sys.stderr)
+                return vise_lock.LOCK_EXIT_CODE
+        return _audited(verb, _guarded,
+                        adapter=getattr(args, "adapter_id", None))
     return getattr(_guard(), f"cmd_{verb}")(args)
 
 
@@ -441,6 +496,25 @@ def cmd_manifest(args: argparse.Namespace) -> int:
 
 def cmd_clean(args: argparse.Namespace) -> int:
     """Clean up stale reports and orphaned adapter state (P2-3)."""
+    # Dry-run is read-only; the real deletion takes the write lock. Both are
+    # audited so an agent's cleanup attempts are traceable.
+    return _audited("clean", lambda: _clean_locked(args))
+
+
+def _clean_locked(args: argparse.Namespace) -> int:
+    dry_run = getattr(args, "dry_run", False)
+    if dry_run:
+        return _cmd_clean(args)
+    # Deletion rewrites .vise state and must not race a snapshot/upgrade.
+    try:
+        with vise_lock.write_lock("clean"):
+            return _cmd_clean(args)
+    except vise_lock.LockTimeout as exc:
+        print(f"visectl: {exc}", file=sys.stderr)
+        return vise_lock.LOCK_EXIT_CODE
+
+
+def _cmd_clean(args: argparse.Namespace) -> int:
     dry_run = getattr(args, "dry_run", False)
     do_reports = getattr(args, "reports", False)
     do_state = getattr(args, "state", False)
@@ -580,6 +654,55 @@ def main() -> int:
     p_manifest.add_argument("manifest_cmd", choices=["list", "verify"])
     p_manifest.add_argument("--json", action="store_true")
 
+    # Append-only execution audit (.vise/audit/audit.jsonl; see core/audit.py)
+    p_audit = sub.add_parser("audit", help="query the execution audit log")
+    p_audit.add_argument("--adapter", default=None,
+                         help="filter by adapter_id")
+    p_audit.add_argument("--event", default=None,
+                         help="filter by event (run/snapshot/restore/...)")
+    p_audit.add_argument("--limit", type=int, default=20,
+                         help="records to return (default 20)")
+    p_audit.add_argument("--json", action="store_true")
+
+    # Wave-2: full-text discovery across the adapter library (read-only).
+    p_search = sub.add_parser("search", help="search adapters by keyword")
+    p_search.add_argument("query", help="keyword to match")
+    p_search.add_argument("--kind", choices=["adapter", "command", "doc"],
+                          default=None, help="restrict to one surface")
+    p_search.add_argument("--limit", type=int, default=20)
+    p_search.add_argument("--json", action="store_true")
+
+    # Wave-2: two-way SKILL.md package bridge.
+    p_skill = sub.add_parser("skill", help="bridge adapters and SKILL.md packages")
+    p_skill_sub = p_skill.add_subparsers(dest="skill_cmd", required=True)
+    pse = p_skill_sub.add_parser("export")
+    pse.add_argument("adapter_id")
+    pse.add_argument("--out", required=True)
+    pse.add_argument("--no-scripts", action="store_true")
+    pse.add_argument("--json", action="store_true")
+    psi = p_skill_sub.add_parser("import")
+    psi.add_argument("dir")
+    psi.add_argument("--id", default=None)
+    psi.add_argument("--name", default=None)
+    psi.add_argument("--category", default="tools")
+    psi.add_argument("--json", action="store_true")
+
+    # Wave-2: portable tree bundle (export + D5 reconcile-on-import).
+    p_bundle = sub.add_parser("bundle", help="export/import a portable Vise tree")
+    p_bundle_sub = p_bundle.add_subparsers(dest="bundle_cmd", required=True)
+    pbe = p_bundle_sub.add_parser("export")
+    pbe.add_argument("--out", required=True)
+    pbe.add_argument("--include-audit", action="store_true")
+    pbe.add_argument("--json", action="store_true")
+    pbi = p_bundle_sub.add_parser("import")
+    pbi.add_argument("file")
+    pbi.add_argument("--conflicts", choices=["ours", "theirs"], default="ours",
+                     help="review-path resolution: ours (default) leaves the "
+                          "on-disk copy, theirs takes the bundle bytes")
+    pbi.add_argument("--dry-run", action="store_true",
+                     help="print the per-file plan without touching anything")
+    pbi.add_argument("--json", action="store_true")
+
     # C13: adapter protection / rollback / sedimentation. Verbs and flag names
     # mirror core/baseline.py and core/adapter_guard.py so their namespaces pass
     # straight through to the module handlers.
@@ -687,6 +810,26 @@ def main() -> int:
         return cmd_clean(args)
     elif args.command == "manifest":
         return cmd_manifest(args)
+    elif args.command == "audit":
+        import audit as vise_audit
+        return vise_audit.cmd_query(args)
+    elif args.command == "search":
+        import search as vise_search
+        return vise_search.cmd_search(args)
+    elif args.command == "skill":
+        import skill_bridge
+        if args.skill_cmd == "export":
+            return skill_bridge.cmd_export(args)
+        return _audited("skill_import",
+                        lambda: skill_bridge.cmd_import(args),
+                        detail=getattr(args, "name", None) or args.dir)
+    elif args.command == "bundle":
+        import bundle as vise_bundle
+        if args.bundle_cmd == "export":
+            return _audited("bundle_export",
+                            lambda: vise_bundle.cmd_export(args))
+        return _audited("bundle_import",
+                        lambda: vise_bundle.cmd_import(args))
     elif args.command == "adapter":
         return cmd_adapter(args)
     else:

@@ -151,7 +151,12 @@ def write_requirements(packages: list[str]) -> None:
     REQUIREMENTS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main() -> int:
+def register(announce: bool = True) -> tuple[int, list[str]]:
+    """Scan, then atomically rewrite registry.json and requirements.txt.
+
+    Callable in-process (scaffold invokes it while already holding the Vise
+    write lock); this function itself does NOT lock. Returns (rc, warnings).
+    """
     adapters, warnings = scan_adapters()
     for w in warnings:
         print(f"register_adapters: WARNING: {w}", file=sys.stderr)
@@ -170,12 +175,28 @@ def main() -> int:
     packages = collect_python_deps(adapters)
     write_requirements(packages)
 
-    enabled = sum(1 for a in adapters if a["enabled"])
-    print(f"register_adapters: wrote {REGISTRY_PATH.relative_to(VISE_ROOT)} "
-          f"({enabled}/{len(adapters)} adapter(s) enabled)")
-    print(f"register_adapters: wrote {REQUIREMENTS_PATH.relative_to(VISE_ROOT)} "
-          f"({len(packages)} python package(s) required)")
-    return 0
+    if announce:
+        enabled = sum(1 for a in adapters if a["enabled"])
+        print(f"register_adapters: wrote "
+              f"{REGISTRY_PATH.relative_to(VISE_ROOT)} "
+              f"({enabled}/{len(adapters)} adapter(s) enabled)")
+        print(f"register_adapters: wrote "
+              f"{REQUIREMENTS_PATH.relative_to(VISE_ROOT)} "
+              f"({len(packages)} python package(s) required)")
+    return 0, warnings
+
+
+def main() -> int:
+    # Rewriting the registry is a `.vise/` write: serialize it against
+    # concurrent scaffold/snapshot/upgrade processes.
+    sys.path.insert(0, str(VISE_ROOT / "core"))
+    import vise_lock
+    try:
+        with vise_lock.write_lock("register adapters"):
+            return register()[0]
+    except vise_lock.LockTimeout as exc:
+        print(f"register_adapters: {exc}", file=sys.stderr)
+        return vise_lock.LOCK_EXIT_CODE
 
 
 if __name__ == "__main__":

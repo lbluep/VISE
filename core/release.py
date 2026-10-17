@@ -125,27 +125,36 @@ def check(root: Path) -> dict:
     return report
 
 
-def cmd_generate(args: argparse.Namespace) -> int:
-    root = Path(args.root).resolve()
-    try:
-        release = args.release or tree_version(root)
-        manifest = build_manifest(root, release)
-    except ValueError as exc:
-        print(f"release: {exc}", file=sys.stderr)
-        return 2
+def generate(root: Path, release: str | None = None) -> dict:
+    """(Re)write the release manifest for `root`; reusable, no argparse.
+
+    Raises ValueError on input errors (e.g. not a Vise tree). Returns a small
+    summary dict. The write is atomic (tmp file + os.replace).
+    """
+    root = Path(root).resolve()
+    release = release or tree_version(root)
+    manifest = build_manifest(root, release)
     path = baseline.release_manifest_path(root)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
                    encoding="utf-8")
     os.replace(tmp, path)
     n_files = sum(len(e["files"]) for e in manifest["adapters"].values())
-    out = {"path": str(path), "release": release,
-           "adapters": len(manifest["adapters"]), "files": n_files}
+    return {"path": str(path), "release": release,
+            "adapters": len(manifest["adapters"]), "files": n_files}
+
+
+def cmd_generate(args: argparse.Namespace) -> int:
+    try:
+        out = generate(Path(args.root), release=args.release)
+    except ValueError as exc:
+        print(f"release: {exc}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(out, indent=2))
     else:
-        print(f"[RELEASE] wrote {path}: v{release}, "
-              f"{len(manifest['adapters'])} adapters, {n_files} files")
+        print(f"[RELEASE] wrote {out['path']}: v{out['release']}, "
+              f"{out['adapters']} adapters, {out['files']} files")
     return 0
 
 

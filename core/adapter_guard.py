@@ -668,9 +668,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("snapshot", "promote") and not args.message.strip():
         parser.error(f"{args.command}: --message must not be blank - "
                      "record WHY the adapter changes")
-    return {"snapshot": cmd_snapshot, "list": cmd_list,
-            "restore": cmd_restore, "promote": cmd_promote,
-            "check": cmd_check, "rebaseline": cmd_rebaseline}[args.command](args)
+    handlers = {"snapshot": cmd_snapshot, "list": cmd_list,
+                "restore": cmd_restore, "promote": cmd_promote,
+                "check": cmd_check, "rebaseline": cmd_rebaseline}
+    handler = handlers[args.command]
+    if args.command in ("snapshot", "restore", "promote", "rebaseline"):
+        # Same single-writer lock visectl takes; nested in-process calls into
+        # baseline.establish() re-enter instead of deadlocking.
+        import vise_lock
+        try:
+            with vise_lock.write_lock(
+                    f"adapter {args.command} {getattr(args, 'adapter_id', '')}"):
+                return handler(args)
+        except vise_lock.LockTimeout as exc:
+            print(f"adapter_guard: {exc}", file=sys.stderr)
+            return vise_lock.LOCK_EXIT_CODE
+    return handler(args)
 
 
 if __name__ == "__main__":

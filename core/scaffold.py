@@ -15,15 +15,16 @@ What it does NOT do: invent your commands. The scaffolded manifest keeps the
 example command skeleton (list / decode / read) — edit `commands`, the CLI
 (src/<id>/main.py) and the healthcheck before running `bash init/setup.sh`.
 
-Exit codes: 0 scaffolded and registered; 2 usage error (bad name, existing
-directory, duplicate adapter_id, unknown category); 1 internal failure.
+Exit codes: 0 scaffolded, registered and release-refreshed; 2 usage error
+(bad name, existing directory, duplicate adapter_id, unknown category);
+1 internal failure (files exist, re-run `core/release.py generate` to
+repair); 75 write-lock timeout (another process is changing .vise state).
 """
 from __future__ import annotations
 
 import json
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -33,14 +34,19 @@ TEMPLATE_DIR = ADAPTERS_DIR / "ExampleAdapter_reference"
 
 # Same set as init/register_adapters.py (B2) — imported when available,
 # duplicated as a literal fallback so scaffold also works standalone.
+sys.path.insert(0, str(VISE_ROOT / "init"))
 try:
-    sys.path.insert(0, str(VISE_ROOT / "init"))
     from register_adapters import CATEGORIES as _CATEGORIES  # noqa: E402
+    from register_adapters import register as _register_now  # noqa: E402
 except Exception:  # pragma: no cover
     _CATEGORIES = {
         "tools", "work_instruction", "database", "ai_chat",
         "plan", "todo", "onedrive", "external",
     }
+    _register_now = None
+sys.path.insert(0, str(VISE_ROOT / "core"))
+import vise_lock  # noqa: E402
+import release as vise_release  # noqa: E402
 
 # Ordered longest-first so "ExampleAdapter_reference" is replaced before its
 # substrings "ExampleAdapter" / "example_tool" could match.
@@ -133,27 +139,29 @@ def scaffold(name: str, *, adapter_id: str | None = None,
         dest.relative_to(VISE_ROOT)), "category": category}
 
 
-def _register() -> tuple[int, str]:
-    proc = subprocess.run(
-        [sys.executable, str(VISE_ROOT / "init" / "register_adapters.py")],
-        capture_output=True, text=True)
-    return proc.returncode, (proc.stdout + proc.stderr).strip()
-
-
 def cmd_scaffold(args) -> int:
+    # The existence/duplicate checks and the whole copy -> register ->
+    # release-refresh sequence are one serialized state change: a concurrent
+    # scaffold/register/upgrade must not see the new directory half-written
+    # or an unrefreshed release manifest.
     try:
-        result = scaffold(args.name, adapter_id=args.id,
-                          category=args.category,
-                          description=args.description)
-    except ValueError as exc:
+        with vise_lock.write_lock(f"scaffold {args.name}"):
+            try:
+                result = scaffold(args.name, adapter_id=args.id,
+                                  category=args.category,
+                                  description=args.description)
+            except ValueError as exc:
+                print(f"visectl: {exc}", file=sys.stderr)
+                return 2
+            except RuntimeError as exc:
+                print(f"visectl: {exc}", file=sys.stderr)
+                return 1
+            ok, output = finalize(result)
+    except vise_lock.LockTimeout as exc:
         print(f"visectl: {exc}", file=sys.stderr)
-        return 2
-    except RuntimeError as exc:
-        print(f"visectl: {exc}", file=sys.stderr)
-        return 1
+        return vise_lock.LOCK_EXIT_CODE
 
-    rc, output = _register()
-    result["registered"] = rc == 0
+    result["registered"] = ok
     if args.json:
         print(json.dumps(result, indent=2))
         if output:
@@ -162,11 +170,44 @@ def cmd_scaffold(args) -> int:
         print(f"scaffold: created {result['path']} "
               f"(adapter_id={result['adapter_id']}, "
               f"category={result['category']})")
-        print(output)
-        if rc == 0:
-            print("scaffold: next — edit commands + src/<id>/main.py, then "
-                  "run `viseinit <id>` and one real `visectl run`.")
-    return 0 if rc == 0 else 1
+        if output:
+            print(output)
+        if ok:
+            print("scaffold: release manifest refreshed automatically; "
+                  "next — edit commands + src/<id>/main.py, then run "
+                  "`viseinit <id>` and one real `visectl run`.")
+    return 0 if ok else 1
+
+
+def finalize(result: dict) -> tuple[bool, str]:
+    """In-process register + release refresh. Returns (ok, human output).
+
+    Public so skill_bridge can reuse it for imported skills under its own
+    write lock. A failure here is exit 1: the adapter files exist, but the
+    generated state is inconsistent and the operator (or CI `release check`)
+    must see that immediately.
+    """
+    import io
+    import contextlib
+
+    if _register_now is None:  # pragma: no cover
+        return False, ("scaffold: init/register_adapters.py unavailable; "
+                       "registry and release manifest not refreshed")
+
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc, _warnings = _register_now(announce=False)
+        if rc != 0:
+            return False, "scaffold: registration failed\n" + buf.getvalue()
+        out = vise_release.generate(VISE_ROOT)
+    except (OSError, ValueError) as exc:
+        return False, (f"scaffold: post-scaffold refresh failed: {exc}\n"
+                       "fix with: .venv/bin/python core/release.py generate\n"
+                       + buf.getvalue())
+    buf.write(f"scaffold: registry refreshed; release manifest now covers "
+              f"{out['adapters']} adapter(s), {out['files']} files\n")
+    return True, buf.getvalue()
 
 
 if __name__ == "__main__":

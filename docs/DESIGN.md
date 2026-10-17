@@ -252,10 +252,13 @@ Design" table). An unknown value is a manifest error — discovery
 [--description "..."]` copies `ExampleAdapter_reference/` to
 `adapters/<Name>/`, renames the identity references (directory, package,
 adapter_id, display name), stamps `version 0.1.0`, validates the contract
-rules above, and re-registers the library (exit 0 scaffolded, 2 usage error,
-1 internal failure). It keeps the example command skeleton — edit `commands`,
-`src/<id>/main.py` and the healthcheck, then run `viseinit <id>` and one real
-`visectl run <id> <cmd>`.
+rules above, and re-registers the library, then refreshes `vise.release.json`
+— copy, register and refresh run under the single write lock as one
+operation (exit 0 scaffolded, 2 usage error, 1 internal failure e.g. the
+release refresh failed — files kept, re-run `core/release.py generate` to
+repair, 75 lock timeout). It keeps the example command skeleton — edit
+`commands`, `src/<id>/main.py` and the healthcheck, then run `viseinit <id>`
+and one real `visectl run <id> <cmd>`.
 
 **Resource read convention:** knowledge-type adapters (e.g. category
 `database`, `work instruction`) expose content through a `read` interface:
@@ -344,6 +347,11 @@ visectl read <id> [query...]                             # read adapter knowledg
 visectl mcp                                              # MCP stdio bridge (JSON-RPC)
 visectl doctor [--json]                                  # diagnose without running init_steps
 visectl clean [--reports] [--state] [--dry-run] [--json] # clean artifacts
+visectl search <query> [--kind kind] [--limit N] [--json]  # full-text adapter/command/README search
+visectl skill export <id> --out DIR [--no-scripts] [--json] # package adapter as a SKILL.md bundle
+visectl skill import <dir> [--category C] [--id x] [--json] # onboard a SKILL.md package as an adapter
+visectl bundle export --out FILE [--include-audit] [--json]  # export a portable, hash-verified tree
+visectl bundle import FILE [--conflicts ours|theirs] [--dry-run] [--json] # reconcile (fresh/merge per adapter)
 visectl manifest list|verify [--json]                    # ledger of files Vise wrote outside VISE_ROOT
 visectl adapter status [<id>] [--json]                   # clean / modified / unbaselined
 visectl adapter diff <id> [--json]                       # file-level drift against the baseline
@@ -354,6 +362,9 @@ visectl adapter list <id> [--json]                       # snapshot generations
 visectl adapter restore <id> [--gen N | --base] [--dry-run]  # roll back byte-for-byte
 visectl adapter promote <id> -m "why" [--dry-run]        # sediment the change as a patch (no commit)
 visectl adapter rebaseline <id> [--all] [--force]        # accept the current tree as the reference
+visectl adapter scaffold <Name> [--id x] [--category c] # new adapter; also registers + refreshes the release manifest
+visectl adapter upgrade [--staged DIR] [--dry-run]       # per-file baseline reconciliation
+visectl audit [--adapter <id>] [--event E] [--limit N] [--json]  # execution audit log
 ```
 
 All commands support `--json` to output machine-readable content to stdout.
@@ -398,6 +409,56 @@ rebaseline <id> [--force] → accept the tree as the reference (closes snapshots
   (no such generation / nothing to promote), `7` refused (unprotected drift or
   `rebaseline` needing `--force`). Distinct from the `viseinit` `0`–`6` map.
 
+**Concurrency — the single-writer lock (`core/vise_lock.py`):**
+
+Two agents working in parallel must not interleave writes to the registry,
+snapshots, baselines or the audit log. Every command that *writes* `.vise/`
+state therefore takes one Linux advisory lock, `fcntl.flock` on
+`.vise/.lock`:
+
+- **Releases itself on process exit**, including `kill -9` — no stale-lock
+  cleanup; acquisition is polled, bounded by `VISE_LOCK_TIMEOUT` (seconds,
+  default `10`, `0` = one non-blocking try).
+- Contention that outlasts the timeout exits **`75`** (EX_TEMPFAIL — a
+  transient, retryable failure), a code domain separate from `viseinit`
+  0–6, guard 0/2/4/7 and the ledger codes.
+- **Re-entrant inside one process** (visectl dispatches guard/baseline/
+  scaffold code in-process; nested calls like `rebaseline` →
+  `baseline.establish` extend the depth instead of deadlocking).
+- Read-only commands never take the lock; a long `visectl run` never blocks
+  the library — it only appends one audit line after finishing.
+- Locked surface: `adapter snapshot/restore/promote/rebaseline`,
+  `baseline establish/upgrade` (not `--dry-run`), `register_adapters`,
+  `scaffold` (copy + register + release refresh as one operation), `clean`.
+  On platforms without `fcntl` the lock degrades to a documented no-op;
+  mutual exclusion is guaranteed on Linux only.
+
+**Execution audit (`core/audit.py`):**
+
+Append-only `.vise/audit/audit.jsonl`, one JSON object per invocation of
+`run` (including guard refusals, rc 7) and every state-changing command
+dispatched by visectl (`snapshot/restore/promote/rebaseline/upgrade/clean/
+scaffold`). The standalone init-script path (`register_adapters.py` driven
+from `setup.sh`) is v1-unaudited.
+
+```
+{"ts":"2026-10-17T09:30:12Z","pid":4123,"via":"cli","event":"run",
+ "adapter":"fast_search","detail":"search","rc":0,"duration_ms":47}
+```
+
+- **Privacy boundary:** event, adapter id and the capability name
+  (`detail`, the first positional) only — never argument values, stdin or
+  the environment. The log lives under the gitignored, machine-local
+  `.vise/`. `via` is `cli`, or `mcp` when the call came through the MCP
+  bridge (it exports `VISE_VIA=mcp`).
+- **Reliability:** auditing is observational — a write failure never
+  changes the command's exit code (surfaced on stderr only with
+  `VISE_DEBUG=1`). Rotation at 1 MiB keeps 5 generations; rotation tries
+  the write lock once and quietly retries on a later event when busy.
+- **Query:** `visectl audit [--adapter] [--event] [--limit] [--json]`,
+  newest first, reads the active log plus rotations and tolerates a
+  malformed tail (parse-error row, exit 0).
+
 **`vise_mcp.py`** MCP stdio bridge (optional Layer 4 front for MCP hosts):
 
 A thin newline-delimited JSON-RPC 2.0 server (stdlib only) that translates MCP
@@ -405,8 +466,16 @@ requests into `visectl` calls — Vise itself stays a local CLI:
 
 | MCP | Vise |
 | --- | --- |
-| `tools/call vise_list / vise_describe / vise_doctor / vise_run` | `visectl list/describe/doctor/run` (`--json`) |
+| `tools/call vise_list / vise_describe / vise_doctor / vise_read / vise_status` | `visectl list/describe/doctor/read` and `adapter status` (read-only, `readOnlyHint`) |
+| `tools/call vise_run / vise_snapshot` | `visectl run`, `adapter snapshot` (writes, not read-only) |
+| `tools/call vise_restore` | `adapter restore` — `destructiveHint`; requires an explicit `confirm: true` argument, otherwise returns `isError` without executing |
 | `resources/list`, `resources/read` | `vise://adapters`, `vise://adapter/<id>/manifest` |
+
+Read-only tools carry the MCP `readOnlyHint` annotation; `vise_restore`
+carries `destructiveHint` and the confirm gate. Calls get a 120 s timeout,
+snapshot/restore 300 s; the bridge launches every subprocess with
+`VISE_VIA=mcp`, so audit records identify MCP-originated activity.
+`serverInfo.version` is read from `core/version.py`.
 
 Launch via `visectl mcp`, or register `core/vise_mcp.py` in an MCP host config.
 

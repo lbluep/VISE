@@ -260,8 +260,9 @@ T11.2, T11.4, T11.6, T11.10–T11.15, T11.19–T11.21).
 ## T12 — Scaffolding & manifest contract enforcement (change surface: `core/scaffold.py`, `init/register_adapters.py`, `core/vise_adapter_paths.py`)
 
 **Automated:** covered by the manual steps below in a sandbox (`rm -rf` the
-scaffolded adapter afterwards); smoke step 8 re-runs `release.py check`, which
-fails if a scaffolded adapter was left unlisted in the release manifest.
+scaffolded adapter afterwards); smoke step 9 scaffolds `DemoScratch` and
+immediately re-runs `release.py check`, which fails unless scaffold refreshed
+the release manifest itself (T13.13 covers the same contract directly).
 
 | ID | Command | Expected |
 | --- | --- | --- |
@@ -278,4 +279,69 @@ fails if a scaffolded adapter was left unlisted in the release manifest.
 | T12.11 | `resolve_with_version("ripgrep", "13.0")` on a host with `rg` | `ok: true`, real version parsed |
 | T12.12 | `resolve_with_version("ripgrep", "99.0")` | `ok: false` — version shortfall detected |
 | T12.13 | `resolve_with_version("7zip", "1.0")` | `ok: true` via the bare-invocation banner (`7z`/`7zz`) |
-| T12.14 | CI (`.github/workflows/ci.yml`) on the windows job | smoke passes under Git Bash on `windows-latest` |
+| T12.14 | CI (`.github/workflows/ci.yml`) on the windows job | smoke passes under Git Bash on `windows-latest`; the Linux-only lock assertions in step 9 are skipped there |
+
+---
+
+## T13 — Single-writer lock, execution audit, MCP governance surface (change surface: `core/vise_lock.py`, `core/audit.py`, `core/visectl.py`, `core/baseline.py`, `core/adapter_guard.py`, `core/scaffold.py`, `init/register_adapters.py`, `core/vise_mcp.py`)
+
+**Scope:** the lock is a Linux `fcntl.flock` guarantee; on platforms without
+`fcntl` it degrades to a documented no-op. Audit, MCP and scaffold refresh are
+platform-independent. Automated subset: smoke step 9 (lock contention, one
+audit query, the 8-tool MCP surface, scaffold + `release check`).
+
+| ID | Command / setup | Expected |
+| --- | --- | --- |
+| T13.1 | hold `.vise/.lock` in a background process; `VISE_LOCK_TIMEOUT=0 visectl adapter snapshot <id> -m x` | exit `75`; stderr names the holder pid/label |
+| T13.2 | same contender with the holder exiting within the timeout | contender blocks, then succeeds `0` — no stale lock after a killed holder (`kill -9` then immediate retry succeeds) |
+| T13.3 | `adapter upgrade --dry-run` (or any read-only command) while the lock is held | not blocked, exit as usual — reads never take the lock |
+| T13.4 | nested in-process calls (e.g. `adapter rebaseline` → internal `baseline.establish`) | succeed under one outer lock, no self-deadlock |
+| T13.5 | two `register_adapters.py` / two `scaffold` invocations racing | one serializes behind the other; no torn `registry.json`; same-name scaffold loses with exit `2` inside the lock |
+| T13.6 | after `visectl run <id> <cap> ...`, `visectl audit --limit 1 --json` | one record with `event=run`, `adapter`, `detail=<cap>`, `rc`, `duration_ms`, `via=cli`; **no** argument values present |
+| T13.7 | a run refused by the guard (exit `7`) | still audited with `rc=7` |
+| T13.8 | `visectl audit --adapter X --event run --limit N [--json]` | filters applied, newest first; empty store prints `no records`, exit `0` |
+| T13.9 | force the active log past 1 MiB (monkeypatch/unit-level) | rotates to `audit.1.jsonl` … keeps 5 generations, newest record still queryable |
+| T13.10 | append a malformed line to the log, then `visectl audit` | query still exits `0`; the bad line is surfaced as a parse-error row |
+| T13.11 | make `.vise/audit` temporarily unwritable | the audited command's own exit code is unchanged; under `VISE_DEBUG=1` the audit failure is printed to stderr |
+| T13.12 | MCP `initialize` + `tools/list` over stdio | 9 tools (after wave-2 `vise_search`); `vise_read/status/doctor/describe/list/search` carry `readOnlyHint: true`; `vise_restore` carries `destructiveHint: true`; `serverInfo.version` equals `core/version.py` |
+| T13.13 | MCP `vise_restore` without `confirm`, then with `confirm:true` | first returns `isError` without executing; second dispatches to `adapter restore` |
+| T13.14 | any MCP tool call, then `visectl audit` | the record shows `via=mcp` (`VISE_VIA` propagated by the bridge) |
+| T13.15 | `visectl adapter scaffold DemoScratch --json` in a sandbox, then `core/release.py check` | exit `0` with no manual `generate`; output reports registry + release refresh counts; remove dir → regenerate restores |
+| T13.16 | make release refresh fail after the copy (read-only tree / fault injection) | scaffold exits `1`; the adapter files remain; stderr names the manual repair command |
+
+---
+
+## T14 — Search, Skill bridge, Bundle export (change surface: `core/search.py`, `core/skill_bridge.py`, `core/bundle.py`, `core/visectl.py`, `core/vise_mcp.py`, `core/scaffold.py`)
+
+**Scope:** `search` is read-only; `skill export` and `bundle export` write outside VISE_ROOT;
+`skill import` and `bundle import` write `adapters/` and re-register under the write lock
+(bundle import reconciles per decision D5). Automated subset: smoke step 10.
+
+| ID | Command / setup | Expected |
+| --- | --- | --- |
+| T14.1 | `visectl search <keyword>` with a known command name | a `command` hit for that adapter ranks above any `doc` hit |
+| T14.2 | `visectl search --kind doc <word>` | only `doc` rows; no adapter/command rows |
+| T14.3 | `visectl search zzz_nomatch` | exit `1`, `no matches`; `--json` emits `[]` |
+| T14.4 | `visectl search <q> --json` | each row has `adapter_id`, `kind`, `score`, `snippet` (and `command` for command hits) |
+| T14.5 | MCP `vise_search` over stdio | readOnlyHint; returns matches; isError false |
+| T14.6 | `visectl skill export <id> --out DIR` | SKILL.md with frontmatter (name/description/category/managed-by) + capabilities table; scripts/ populated (unless `--no-scripts`) |
+| T14.7 | `skill export --out DIR` where DIR exists and is non-empty | exit `2`, no overwrite |
+| T14.8 | `skill export <unknown>` | exit `2` |
+| T14.9 | `skill import <knowledge-skill>` (no scripts/) | creates a list+read adapter; `run <id> read skill` serves the SKILL.md body; `--self-test` exits 0 |
+| T14.10 | `skill import <scripted-skill>` | one command per `scripts/*.py`; `run <id> --help` lists them; `--self-test` exits 0; adapter `status` is `clean` |
+| T14.11 | `skill import` into an existing adapter dir, or with a non-PascalCase name, or a bad category | exit `2` |
+| T14.12 | after `skill import`, `adapter status <id>` | `clean` (auto-establish with refresh=True avoids stale baselines) |
+| T14.13 | re-import an adapter that was deleted (dir removed but `.vise/baseline/<id>` remains) | new import still ends `clean` (refresh=True); no drift from the old baseline |
+| T14.14 | `bundle export --out FILE` | tar.gz containing `adapters/`, `vise.release.json`, `.vise/{baseline,patches,state}/`, `BUNDLE.json` |
+| T14.15 | bundle content audit | does NOT contain `snapshots/`, `python/`, `reports/`, `installed.json`, `tool_paths.json`, `.vise/version`, `registry.json`, `requirements.txt` (nor `__pycache__`/`.git`/`.vise` residue under `adapters/`) |
+| T14.16 | `bundle import FILE` (same-tree bundle) | verifies hashes, reconciles: every adapter `keep`, exit `0`, tree unchanged |
+| T14.17 | flip one byte inside a bundled file, then `bundle import` | exit `2`, sha256 verification failure; tree untouched |
+| T14.18 | `bundle import <missing>` | exit `2`, "bundle not found" |
+| T14.19 | `bundle export --include-audit` vs default | default excludes `.vise/audit/`; `--include-audit` includes it |
+| T14.20 | `bundle export --out FILE` when FILE already exists | exit `2`, refuses overwrite |
+| T14.21 | delete an adapter (dir + `.vise/baseline/<id>`) from a tree, then `bundle import` the pre-delete bundle | adapter restored verbatim, baseline re-established, registered, `release check` exit `0` |
+| T14.22 | `bundle import --dry-run` after local drift | prints the per-file plan (review lines included), no writes: adapter mtimes, `.vise/baseline/`, snapshots and registry all unchanged |
+| T14.23 | local edit on a file the bundle also changed (three-way mismatch), `bundle import` | review line for that path, exit `2`, on-disk bytes untouched; other files still keep/update |
+| T14.24 | same, with `--conflicts=theirs` | bundle bytes written for the review path, exit `0`, baseline re-established clean |
+| T14.25 | bundle member outside `adapters/` / `.vise/{baseline,patches,state}/` (or adapter dir without `vise.adapter.json`) | exit `2` before any write |
+| T14.26 | merge import on a registered, clean adapter | pre-merge snapshot auto-created (`triggered_by=bundle_import`); `audit --event bundle_import` records rc without argument values |
